@@ -1,0 +1,45 @@
+@"
+# Local AI specification docs, not for GitHub
+docs/
+examples/
+prompts/
+MANIFEST.txt
+README.md
+
+# Build outputs
+build/
+out/
+dist/
+Debug/
+Release/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Binaries
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.a
+*.so
+*.dylib
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+"@ | Set-Content -Encoding UTF8 .gitignore
