@@ -1,3 +1,8 @@
+/*
+ * ca_status.h
+ * 整个项目的错误码枚举，所有函数都用它来统一表达成功 / 失败原因。
+ * Uniform error code enum — every API in cagent returns one of these.
+ */
 #ifndef CA_STATUS_H
 #define CA_STATUS_H
 
