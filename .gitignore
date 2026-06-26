@@ -26,6 +26,13 @@ compile_commands.json
 # Runtime data
 .cagent/sessions/
 
+# Local specification package
+MANIFEST.txt
+README.md
+docs/
+examples/
+prompts/
+
 # Logs and caches
 *.log
 *.tmp
