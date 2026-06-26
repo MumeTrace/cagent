@@ -1,11 +1,3 @@
-@"
-# Local AI specification docs, not for GitHub
-docs/
-examples/
-prompts/
-MANIFEST.txt
-README.md
-
 # Build outputs
 build/
 out/
@@ -19,16 +11,25 @@ CMakeCache.txt
 cmake_install.cmake
 compile_commands.json
 
-# Binaries
+# Binaries and objects
 *.exe
 *.dll
 *.lib
 *.obj
+*.o
 *.pdb
 *.ilk
 *.a
 *.so
 *.dylib
+
+# Runtime data
+.cagent/sessions/
+
+# Logs and caches
+*.log
+*.tmp
+*.cache
 
 # IDE
 .vscode/
@@ -39,7 +40,3 @@ compile_commands.json
 # OS
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
-"@ | Set-Content -Encoding UTF8 .gitignore

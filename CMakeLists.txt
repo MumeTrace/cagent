@@ -13,6 +13,8 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_executable(cagent
     src/main.c
     src/cli/repl.c
+    src/config/config.c
+    src/config/env.c
 )
 
 target_include_directories(cagent

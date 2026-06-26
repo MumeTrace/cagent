@@ -72,10 +72,14 @@ static ca_status_t ca_cli_get_workspace(char *buffer, size_t buffer_size)
     return CA_OK;
 }
 
-static ca_status_t ca_cli_print_banner(void)
+static ca_status_t ca_cli_print_banner(const ca_config_t *config)
 {
     char workspace[CA_WORKSPACE_CAP];
     ca_status_t status = ca_cli_get_workspace(workspace, sizeof(workspace));
+
+    if (config == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
 
     printf("C-Agent CLI\n\n");
     if (status == CA_OK) {
@@ -83,6 +87,10 @@ static ca_status_t ca_cli_print_banner(void)
     } else {
         printf("Workspace: <unavailable>\n");
     }
+    printf("Provider: %s\n", config->default_provider);
+    printf("Provider type: %s\n", ca_provider_type_to_string(config->provider_type));
+    printf("Compat profile: %s\n", ca_compat_profile_to_string(config->compat_profile));
+    printf("Model: %s\n", config->model);
     printf("Mode: interactive\n\n");
     printf("Type /help for help, /exit to quit.\n\n");
 
@@ -93,28 +101,31 @@ static ca_status_t ca_cli_print_repl_help(void)
 {
     printf("Commands:\n");
     printf("  /help          Show this help\n");
+    printf("  /config        Show current configuration summary\n");
     printf("  /exit, /quit   Exit the REPL\n");
     printf("\n");
-    printf("Natural language prompts are accepted, but LLM and Agent Loop are not implemented in Phase 1.\n");
+    printf("Natural language prompts are accepted, but LLM and Agent Loop are not implemented in Phase 2.2.\n");
     return CA_OK;
 }
 
-static ca_status_t ca_cli_handle_prompt(const char *prompt)
+static ca_status_t ca_cli_handle_prompt(const char *prompt, const ca_config_t *config)
 {
     if (prompt == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
-    printf("Phase 1 CLI received: %s\n", prompt);
+    (void)config;
+
+    printf("Phase 2.2 CLI received: %s\n", prompt);
     printf("LLM, tools, and Agent Loop are not implemented yet.\n");
     return CA_OK;
 }
 
-static ca_status_t ca_cli_handle_input(char *input, int *should_exit)
+static ca_status_t ca_cli_handle_input(char *input, const ca_config_t *config, int *should_exit)
 {
     char *trimmed;
 
-    if (input == NULL || should_exit == NULL) {
+    if (input == NULL || config == NULL || should_exit == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
@@ -130,6 +141,9 @@ static ca_status_t ca_cli_handle_input(char *input, int *should_exit)
         if (strcmp(trimmed, "/help") == 0) {
             return ca_cli_print_repl_help();
         }
+        if (strcmp(trimmed, "/config") == 0) {
+            return ca_config_print_summary(config, stdout);
+        }
         if (strcmp(trimmed, "/exit") == 0 || strcmp(trimmed, "/quit") == 0) {
             *should_exit = 1;
             return CA_OK;
@@ -140,7 +154,7 @@ static ca_status_t ca_cli_handle_input(char *input, int *should_exit)
         return CA_OK;
     }
 
-    return ca_cli_handle_prompt(trimmed);
+    return ca_cli_handle_prompt(trimmed, config);
 }
 
 static ca_status_t ca_cli_read_all_stdin(char **out_text)
@@ -203,6 +217,7 @@ ca_status_t ca_cli_print_help(void)
 {
     printf("Usage: cagent [options] [prompt]\n\n");
     printf("Options:\n");
+    printf("  --config <path>  Use a specific config file\n");
     printf("  --help       Show this help\n");
     printf("  --version    Show version\n");
     printf("\n");
@@ -219,24 +234,32 @@ ca_status_t ca_cli_print_version(void)
     return CA_OK;
 }
 
-ca_status_t ca_cli_run_default(void)
+ca_status_t ca_cli_run_default(const ca_config_t *config)
 {
-    if (!CA_ISATTY(CA_FILENO(stdin))) {
-        return ca_cli_run_stdin();
+    if (config == NULL) {
+        return CA_ERR_INVALID_ARG;
     }
 
-    return ca_cli_run_interactive();
+    if (!CA_ISATTY(CA_FILENO(stdin))) {
+        return ca_cli_run_stdin(config);
+    }
+
+    return ca_cli_run_interactive(config);
 }
 
-ca_status_t ca_cli_run_interactive(void)
+ca_status_t ca_cli_run_interactive(const ca_config_t *config)
 {
     char line[CA_REPL_LINE_CAP];
     void (*previous_handler)(int);
 
+    if (config == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
+
     previous_handler = signal(SIGINT, ca_cli_on_sigint);
     (void)previous_handler;
 
-    ca_cli_print_banner();
+    ca_cli_print_banner(config);
 
     for (;;) {
         int should_exit = 0;
@@ -259,7 +282,7 @@ ca_status_t ca_cli_run_interactive(void)
             break;
         }
 
-        status = ca_cli_handle_input(line, &should_exit);
+        status = ca_cli_handle_input(line, config, &should_exit);
         if (status != CA_OK) {
             return status;
         }
@@ -271,14 +294,14 @@ ca_status_t ca_cli_run_interactive(void)
     return CA_OK;
 }
 
-ca_status_t ca_cli_run_once(const char *prompt)
+ca_status_t ca_cli_run_once(const char *prompt, const ca_config_t *config)
 {
     char *copy;
     int should_exit = 0;
     ca_status_t status;
     size_t prompt_len;
 
-    if (prompt == NULL) {
+    if (prompt == NULL || config == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
@@ -289,22 +312,26 @@ ca_status_t ca_cli_run_once(const char *prompt)
     }
 
     memcpy(copy, prompt, prompt_len + 1);
-    status = ca_cli_handle_input(copy, &should_exit);
+    status = ca_cli_handle_input(copy, config, &should_exit);
     free(copy);
 
     return status;
 }
 
-ca_status_t ca_cli_run_stdin(void)
+ca_status_t ca_cli_run_stdin(const ca_config_t *config)
 {
     char *input = NULL;
     ca_status_t status = ca_cli_read_all_stdin(&input);
+
+    if (config == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
 
     if (status != CA_OK) {
         return status;
     }
 
-    status = ca_cli_run_once(input);
+    status = ca_cli_run_once(input, config);
     free(input);
 
     return status;

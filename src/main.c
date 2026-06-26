@@ -1,7 +1,9 @@
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "ca_cli.h"
+#include "ca_config.h"
 #include "ca_status.h"
 
 static ca_status_t ca_main_join_prompt(int argc, char **argv, char **out_prompt)
@@ -46,13 +48,43 @@ static ca_status_t ca_main_join_prompt(int argc, char **argv, char **out_prompt)
     return CA_OK;
 }
 
+static ca_status_t ca_main_load_config(const char *config_path, ca_config_t *config)
+{
+    ca_status_t status;
+
+    if (config == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    status = ca_config_load(config, config_path);
+    if (status != CA_OK) {
+        fprintf(stderr, "Failed to load configuration.\n");
+        return status;
+    }
+
+    if (config->missing_config_file) {
+        fprintf(stderr, "Config file not found: %s\n", config->config_path);
+        fprintf(stderr, "Using defaults. Set CAGENT_API_KEY/CAGENT_BASE_URL or create the config file.\n");
+    }
+
+    return CA_OK;
+}
+
 int main(int argc, char **argv)
 {
     ca_status_t status;
     char *prompt = NULL;
+    ca_config_t config;
+    const char *config_path = NULL;
+    int prompt_start = 0;
+    int i;
 
     if (argc == 1) {
-        return ca_cli_run_default();
+        status = ca_main_load_config(NULL, &config);
+        if (status != CA_OK) {
+            return status;
+        }
+        return ca_cli_run_default(&config);
     }
 
     if (argc == 2 &&
@@ -65,17 +97,41 @@ int main(int argc, char **argv)
         return ca_cli_print_help();
     }
 
-    if (argv[1][0] == '-') {
-        ca_cli_print_help();
-        return CA_ERR_INVALID_ARG;
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--config") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "--config requires a path.\n");
+                return CA_ERR_INVALID_ARG;
+            }
+            config_path = argv[i + 1];
+            i++;
+            continue;
+        }
+
+        if (argv[i][0] == '-') {
+            ca_cli_print_help();
+            return CA_ERR_INVALID_ARG;
+        }
+
+        prompt_start = i;
+        break;
     }
 
-    status = ca_main_join_prompt(argc - 1, argv + 1, &prompt);
+    status = ca_main_load_config(config_path, &config);
     if (status != CA_OK) {
         return status;
     }
 
-    status = ca_cli_run_once(prompt);
+    if (prompt_start == 0) {
+        return ca_cli_run_default(&config);
+    }
+
+    status = ca_main_join_prompt(argc - prompt_start, argv + prompt_start, &prompt);
+    if (status != CA_OK) {
+        return status;
+    }
+
+    status = ca_cli_run_once(prompt, &config);
     free(prompt);
 
     return status;
