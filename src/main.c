@@ -12,8 +12,10 @@
 
 #include "ca_cli.h"
 #include "ca_config.h"
+#include "ca_file_tools.h"
 #include "ca_project.h"
 #include "ca_status.h"
+#include "ca_tool.h"
 
 /*
  * 把 argc/argv 里剩下的 prompt 片段用空格拼成完整字符串
@@ -123,6 +125,36 @@ static ca_status_t ca_main_load_project(ca_project_index_t *project)
     return CA_OK;
 }
 
+static ca_status_t ca_main_load_tools(ca_tool_registry_t *tools)
+{
+    ca_status_t status;
+
+    if (tools == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    status = ca_tool_registry_init(tools);
+    if (status != CA_OK) {
+        return status;
+    }
+
+    status = ca_register_builtin_tools(tools);
+    if (status != CA_OK) {
+        ca_tool_registry_free(tools);
+        fprintf(stderr, "Failed to register builtin tools.\n");
+        return status;
+    }
+
+    status = ca_register_file_tools(tools);
+    if (status != CA_OK) {
+        ca_tool_registry_free(tools);
+        fprintf(stderr, "Failed to register file tools.\n");
+        return status;
+    }
+
+    return CA_OK;
+}
+
 /* ---- main: 参数解析 → 分发 / arg parsing → dispatch ---- */
 int main(int argc, char **argv)
 {
@@ -130,6 +162,7 @@ int main(int argc, char **argv)
     char *prompt = NULL;
     ca_config_t config;
     ca_project_index_t project;
+    ca_tool_registry_t tools;
     const char *config_path = NULL;
     int prompt_start = 0;
     int i;
@@ -144,7 +177,13 @@ int main(int argc, char **argv)
         if (status != CA_OK) {
             return status;
         }
-        status = ca_cli_run_default(&config, &project);
+        status = ca_main_load_tools(&tools);
+        if (status != CA_OK) {
+            ca_project_index_free(&project);
+            return status;
+        }
+        status = ca_cli_run_default(&config, &project, &tools);
+        ca_tool_registry_free(&tools);
         ca_project_index_free(&project);
         return status;
     }
@@ -195,7 +234,13 @@ int main(int argc, char **argv)
         if (status != CA_OK) {
             return status;
         }
-        status = ca_cli_run_default(&config, &project);
+        status = ca_main_load_tools(&tools);
+        if (status != CA_OK) {
+            ca_project_index_free(&project);
+            return status;
+        }
+        status = ca_cli_run_default(&config, &project, &tools);
+        ca_tool_registry_free(&tools);
         ca_project_index_free(&project);
         return status;
     }
@@ -212,7 +257,15 @@ int main(int argc, char **argv)
         return status;
     }
 
-    status = ca_cli_run_once(prompt, &config, &project);
+    status = ca_main_load_tools(&tools);
+    if (status != CA_OK) {
+        ca_project_index_free(&project);
+        free(prompt);
+        return status;
+    }
+
+    status = ca_cli_run_once(prompt, &config, &project, &tools);
+    ca_tool_registry_free(&tools);
     ca_project_index_free(&project);
     free(prompt);
 

@@ -1,10 +1,9 @@
 /*
  * repl.c
  * CLI 前端：交互 REPL、单次 prompt 执行、stdin 管道模式、帮助和版本打印。
- * 目前 Phase 3 阶段，LLM 和 Agent Loop 未实现，自然语言输入仅 echo 回显。
  *
  * CLI frontend: interactive REPL, one-shot prompt, stdin pipe, help & version.
- * Currently at Phase 3 — LLM / Agent Loop not yet wired; natural-language prompts just echo.
+ * Currently at Phase 4 — LLM / Agent Loop not yet wired; natural-language prompts just echo.
  */
 #include "ca_cli.h"
 
@@ -70,6 +69,22 @@ static ca_status_t ca_trim_in_place(char *text, char **out_trimmed)
     return CA_OK;
 }
 
+static ca_status_t ca_cli_copy_text(char *dest, size_t dest_size, const char *src)
+{
+    int written;
+
+    if (dest == NULL || dest_size == 0 || src == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    written = snprintf(dest, dest_size, "%s", src);
+    if (written < 0 || (size_t)written >= dest_size) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    return CA_OK;
+}
+
 /* ---- 工作区获取 / get workspace ---- */
 static ca_status_t ca_cli_get_workspace(char *buffer, size_t buffer_size)
 {
@@ -120,9 +135,94 @@ static ca_status_t ca_cli_print_repl_help(void)
     printf("  /help          Show this help\n");
     printf("  /config        Show current configuration summary\n");
     printf("  /project       Show current project summary\n");
+    printf("  /tools         Show registered tools\n");
+    printf("  /tool-test     Execute a registered test tool\n");
     printf("  /exit, /quit   Exit the REPL\n");
     printf("\n");
-    printf("Natural language prompts are accepted, but LLM and Agent Loop are not implemented in Phase 3.\n");
+    printf("Natural language prompts are accepted, but LLM and Agent Loop are not implemented in Phase 4.\n");
+    return CA_OK;
+}
+
+static void ca_cli_print_tool_result(ca_status_t status, const ca_tool_result_t *result)
+{
+    if (result == NULL) {
+        return;
+    }
+
+    printf("status: %d\n", (int)status);
+    printf("tool: %s\n", result->tool_name[0] != '\0' ? result->tool_name : "<none>");
+    printf("success: %s\n", result->success ? "true" : "false");
+    if (result->success) {
+        printf("result_json: %s\n", result->result_json[0] != '\0' ? result->result_json : "{}");
+    } else {
+        printf("error_code: %s\n", result->error_code[0] != '\0' ? result->error_code : "<none>");
+        printf("error_message: %s\n", result->error_message[0] != '\0' ? result->error_message : "<none>");
+    }
+}
+
+static ca_status_t ca_cli_run_tool_test(const char *command_args,
+                                        const ca_config_t *config,
+                                        const ca_project_index_t *project,
+                                        const ca_tool_registry_t *tools)
+{
+    ca_tool_call_t call;
+    ca_tool_context_t ctx;
+    ca_tool_result_t result;
+    char *tool_name_end;
+    char *args_start;
+    char *mutable_args;
+    char *trimmed_args;
+    ca_status_t status;
+
+    if (command_args == NULL || config == NULL || project == NULL || tools == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    memset(&call, 0, sizeof(call));
+    memset(&result, 0, sizeof(result));
+
+    mutable_args = (char *)command_args;
+    if (ca_trim_in_place(mutable_args, &trimmed_args) != CA_OK || trimmed_args[0] == '\0') {
+        printf("Usage: /tool-test <tool_name> [arguments]\n");
+        return CA_OK;
+    }
+
+    tool_name_end = trimmed_args;
+    while (*tool_name_end != '\0' && !isspace((unsigned char)*tool_name_end)) {
+        tool_name_end++;
+    }
+
+    if (*tool_name_end != '\0') {
+        *tool_name_end = '\0';
+        args_start = tool_name_end + 1;
+        while (*args_start != '\0' && isspace((unsigned char)*args_start)) {
+            args_start++;
+        }
+    } else {
+        args_start = "";
+    }
+
+    /*
+     * /tool-test is only a manual executor probe. It bypasses LLM parsing and
+     * permission policy, but still goes through ca_tool_execute().
+     */
+    status = ca_cli_copy_text(call.tool_name, sizeof(call.tool_name), trimmed_args);
+    if (status != CA_OK) {
+        return status;
+    }
+    status = ca_cli_copy_text(call.arguments_json, sizeof(call.arguments_json), args_start);
+    if (status != CA_OK) {
+        return status;
+    }
+    (void)ca_cli_copy_text(call.reason, sizeof(call.reason), "manual /tool-test");
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.workspace_root = project->workspace_root;
+    ctx.project_index = project;
+    ctx.config = config;
+
+    status = ca_tool_execute(tools, &call, &result, &ctx);
+    ca_cli_print_tool_result(status, &result);
     return CA_OK;
 }
 
@@ -135,7 +235,7 @@ static ca_status_t ca_cli_handle_prompt(const char *prompt, const ca_config_t *c
 
     (void)config;
 
-    printf("Phase 3 CLI received: %s\n", prompt);
+    printf("Phase 4 CLI received: %s\n", prompt);
     printf("LLM, tools, and Agent Loop are not implemented yet.\n");
     return CA_OK;
 }
@@ -147,11 +247,12 @@ static ca_status_t ca_cli_handle_prompt(const char *prompt, const ca_config_t *c
 static ca_status_t ca_cli_handle_input(char *input,
                                        const ca_config_t *config,
                                        const ca_project_index_t *project,
+                                       const ca_tool_registry_t *tools,
                                        int *should_exit)
 {
     char *trimmed;
 
-    if (input == NULL || config == NULL || project == NULL || should_exit == NULL) {
+    if (input == NULL || config == NULL || project == NULL || tools == NULL || should_exit == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
@@ -174,6 +275,14 @@ static ca_status_t ca_cli_handle_input(char *input,
         if (strcmp(trimmed, "/project") == 0) {
             ca_project_index_print_summary(project, stdout);
             return CA_OK;
+        }
+        if (strcmp(trimmed, "/tools") == 0) {
+            ca_tool_registry_print(tools, stdout);
+            return CA_OK;
+        }
+        if (strncmp(trimmed, "/tool-test", 10) == 0 &&
+            (trimmed[10] == '\0' || isspace((unsigned char)trimmed[10]))) {
+            return ca_cli_run_tool_test(trimmed + 10, config, project, tools);
         }
         if (strcmp(trimmed, "/exit") == 0 || strcmp(trimmed, "/quit") == 0) {
             *should_exit = 1;
@@ -274,27 +383,31 @@ ca_status_t ca_cli_print_version(void)
 
 /* 默认模式：先判断是不是 TTY，不是就走 stdin，是就走 REPL
  * Default: if not a TTY → stdin mode; otherwise → interactive REPL. */
-ca_status_t ca_cli_run_default(const ca_config_t *config, const ca_project_index_t *project)
+ca_status_t ca_cli_run_default(const ca_config_t *config,
+                               const ca_project_index_t *project,
+                               const ca_tool_registry_t *tools)
 {
-    if (config == NULL || project == NULL) {
+    if (config == NULL || project == NULL || tools == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
     if (!CA_ISATTY(CA_FILENO(stdin))) {
-        return ca_cli_run_stdin(config, project);
+        return ca_cli_run_stdin(config, project, tools);
     }
 
-    return ca_cli_run_interactive(config, project);
+    return ca_cli_run_interactive(config, project, tools);
 }
 
 /* 交互 REPL 主循环 / interactive REPL main loop */
-ca_status_t ca_cli_run_interactive(const ca_config_t *config, const ca_project_index_t *project)
+ca_status_t ca_cli_run_interactive(const ca_config_t *config,
+                                   const ca_project_index_t *project,
+                                   const ca_tool_registry_t *tools)
 {
     char line[CA_REPL_LINE_CAP];
     void (*previous_handler)(int);
     ca_status_t final_status = CA_OK;
 
-    if (config == NULL || project == NULL) {
+    if (config == NULL || project == NULL || tools == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
@@ -326,7 +439,7 @@ ca_status_t ca_cli_run_interactive(const ca_config_t *config, const ca_project_i
             break;
         }
 
-        status = ca_cli_handle_input(line, config, project, &should_exit);
+        status = ca_cli_handle_input(line, config, project, tools, &should_exit);
         if (status != CA_OK) {
             final_status = status;
             goto cleanup;
@@ -348,14 +461,17 @@ cleanup:
 }
 
 /* 单次 prompt 执行 / one-shot prompt */
-ca_status_t ca_cli_run_once(const char *prompt, const ca_config_t *config, const ca_project_index_t *project)
+ca_status_t ca_cli_run_once(const char *prompt,
+                            const ca_config_t *config,
+                            const ca_project_index_t *project,
+                            const ca_tool_registry_t *tools)
 {
     char *copy;
     int should_exit = 0;
     ca_status_t status;
     size_t prompt_len;
 
-    if (prompt == NULL || config == NULL || project == NULL) {
+    if (prompt == NULL || config == NULL || project == NULL || tools == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
@@ -367,19 +483,21 @@ ca_status_t ca_cli_run_once(const char *prompt, const ca_config_t *config, const
     }
 
     memcpy(copy, prompt, prompt_len + 1);
-    status = ca_cli_handle_input(copy, config, project, &should_exit);
+    status = ca_cli_handle_input(copy, config, project, tools, &should_exit);
     free(copy);
 
     return status;
 }
 
 /* stdin 管道模式 / pipe mode */
-ca_status_t ca_cli_run_stdin(const ca_config_t *config, const ca_project_index_t *project)
+ca_status_t ca_cli_run_stdin(const ca_config_t *config,
+                             const ca_project_index_t *project,
+                             const ca_tool_registry_t *tools)
 {
     char *input = NULL;
     ca_status_t status = ca_cli_read_all_stdin(&input);
 
-    if (config == NULL || project == NULL) {
+    if (config == NULL || project == NULL || tools == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
@@ -387,7 +505,7 @@ ca_status_t ca_cli_run_stdin(const ca_config_t *config, const ca_project_index_t
         return status;
     }
 
-    status = ca_cli_run_once(input, config, project);
+    status = ca_cli_run_once(input, config, project, tools);
     free(input);
 
     return status;

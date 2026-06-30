@@ -12,12 +12,22 @@
 #include "ca_config.h"
 #include "ca_project.h"
 #include "ca_status.h"
+#include "ca_tool.h"
 
 ca_status_t ca_cli_print_help(void);
 ca_status_t ca_cli_print_version(void);
-ca_status_t ca_cli_run_default(const ca_config_t *config, const ca_project_index_t *project);
-ca_status_t ca_cli_run_interactive(const ca_config_t *config, const ca_project_index_t *project);
-ca_status_t ca_cli_run_once(const char *prompt, const ca_config_t *config, const ca_project_index_t *project);
-ca_status_t ca_cli_run_stdin(const ca_config_t *config, const ca_project_index_t *project);
+ca_status_t ca_cli_run_default(const ca_config_t *config,
+                               const ca_project_index_t *project,
+                               const ca_tool_registry_t *tools);
+ca_status_t ca_cli_run_interactive(const ca_config_t *config,
+                                   const ca_project_index_t *project,
+                                   const ca_tool_registry_t *tools);
+ca_status_t ca_cli_run_once(const char *prompt,
+                            const ca_config_t *config,
+                            const ca_project_index_t *project,
+                            const ca_tool_registry_t *tools);
+ca_status_t ca_cli_run_stdin(const ca_config_t *config,
+                             const ca_project_index_t *project,
+                             const ca_tool_registry_t *tools);
 
 #endif

@@ -20,9 +20,14 @@ add_executable(cagent
     src/cli/repl.c
     src/config/config.c
     src/config/env.c
+    src/json/json.c
     src/project/ignore_rules.c
     src/project/project_detector.c
     src/project/project_indexer.c
+    src/tool/builtin_tools.c
+    src/tool/tool_executor.c
+    src/tool/tool_registry.c
+    src/tools/file_tools.c
 )
 
 # 头文件搜索路径 / include path

@@ -15,7 +15,9 @@ typedef enum ca_status {
     CA_ERR_LLM,
     CA_ERR_PERMISSION_DENIED,
     CA_ERR_TOOL_NOT_FOUND,
-    CA_ERR_TOOL_FAILED
+    CA_ERR_TOOL_FAILED,
+    CA_ERR_NOT_FOUND,
+    CA_ERR_TYPE_MISMATCH
 } ca_status_t;
 
 #endif

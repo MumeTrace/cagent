@@ -1,12 +1,11 @@
 /*
  * config.c
- * 配置加载：默认值初始化 → JSON 文件读取 → MVP 解析 → 环境变量覆盖。
- * 当前使用手写 JSON 解析器（够用就行），未来可以换成 cJSON / jansson 等完整库。
+ * 配置加载：默认值初始化 → JSON 文件读取 → ca_json 字段提取 → 环境变量覆盖。
  *
- * Config loading: defaults → read JSON file → MVP parse → env overlay.
- * Uses a hand-rolled JSON parser for now (good enough); swap in cJSON/jansson later.
+ * Config loading: defaults → read JSON file → ca_json field extraction → env overlay.
  */
 #include "ca_config.h"
+#include "ca_json.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -120,320 +119,8 @@ static void ca_config_warn(const char *field, const char *message)
     fprintf(stderr, "Warning: config %s: %s\n", field != NULL ? field : "<unknown>", message);
 }
 
-/* ---- 手写 JSON 解析器（MVP，够用就行）/ hand-rolled JSON parser (MVP) ---- */
-
-/* 跳过空白 / skip whitespace */
-static const char *ca_json_skip_ws(const char *text)
-{
-    while (text != NULL && *text != '\0' && isspace((unsigned char)*text)) {
-        text++;
-    }
-    return text;
-}
-
-static const char *ca_json_skip_ws_to_end(const char *text, const char *end)
-{
-    while (text != NULL && text < end && isspace((unsigned char)*text)) {
-        text++;
-    }
-    return text;
-}
-
-static const char *ca_json_string_end(const char *quote, const char *end)
-{
-    const char *cursor;
-    int escaped = 0;
-
-    if (quote == NULL || quote >= end || *quote != '"') {
-        return NULL;
-    }
-
-    for (cursor = quote + 1; cursor < end; cursor++) {
-        if (escaped) {
-            escaped = 0;
-            continue;
-        }
-        if (*cursor == '\\') {
-            escaped = 1;
-            continue;
-        }
-        if (*cursor == '"') {
-            return cursor;
-        }
-    }
-
-    return NULL;
-}
-
-/*
- * Find a key token in a JSON range. A string is considered a key only when
- * its closing quote is followed by optional whitespace and ':'.
- */
-static const char *ca_json_find_key_in_range(const char *start, size_t len, const char *key)
-{
-    size_t key_len;
-    const char *cursor;
-    const char *end;
-
-    if (start == NULL || key == NULL) {
-        return NULL;
-    }
-
-    key_len = strlen(key);
-    cursor = start;
-    end = start + len;
-
-    while (cursor < end) {
-        const char *string_end;
-        const char *after_string;
-
-        if (*cursor != '"') {
-            cursor++;
-            continue;
-        }
-
-        string_end = ca_json_string_end(cursor, end);
-        if (string_end == NULL) {
-            return NULL;
-        }
-
-        after_string = ca_json_skip_ws_to_end(string_end + 1, end);
-        if (after_string < end && *after_string == ':') {
-            size_t token_len = (size_t)(string_end - cursor - 1);
-
-            if (token_len == key_len && memcmp(cursor + 1, key, key_len) == 0) {
-                return after_string + 1;
-            }
-        }
-
-        cursor = string_end + 1;
-    }
-
-    return NULL;
-}
-
-/*
- * 找一个嵌套对象：找到 "key": { ... }，返回 { } 的范围
- * Find a nested object: locate "key": { ... }, return the { } range.
- * 正确处理字符串中的转义，防止花括号在字符串里被误算
- * Handles escape sequences so braces inside strings don't break depth counting.
- */
-static ca_status_t ca_json_find_object(const char *start,
-                                       size_t len,
-                                       const char *key,
-                                       const char **out_start,
-                                       size_t *out_len)
-{
-    const char *value;
-    const char *cursor;
-    const char *end;
-    int depth = 0;
-    int in_string = 0;
-    int escaped = 0;
-
-    if (start == NULL || key == NULL || out_start == NULL || out_len == NULL) {
-        return CA_ERR_INVALID_ARG;
-    }
-
-    *out_start = NULL;
-    *out_len = 0;
-
-    value = ca_json_find_key_in_range(start, len, key);
-    if (value == NULL) {
-        return CA_ERR_JSON;
-    }
-
-    value = ca_json_skip_ws(value);
-    end = start + len;
-    if (value >= end || *value != '{') {
-        return CA_ERR_JSON;
-    }
-
-    cursor = value;
-    while (cursor < end) {
-        char ch = *cursor;
-
-        if (in_string) {
-            if (escaped) {
-                escaped = 0;
-            } else if (ch == '\\') {
-                escaped = 1;
-            } else if (ch == '"') {
-                in_string = 0;
-            }
-        } else {
-            if (ch == '"') {
-                in_string = 1;
-            } else if (ch == '{') {
-                depth++;
-            } else if (ch == '}') {
-                depth--;
-                if (depth == 0) {
-                    *out_start = value;
-                    *out_len = (size_t)(cursor - value + 1);
-                    return CA_OK;
-                }
-            }
-        }
-
-        cursor++;
-    }
-
-    return CA_ERR_JSON;
-}
-
-/* 读取字符串值 "..."（已定位到引号之后）/ read a JSON string value past the opening quote */
-static ca_status_t ca_json_get_string(const char *start,
-                                      size_t len,
-                                      const char *key,
-                                      char *dest,
-                                      size_t dest_size)
-{
-    const char *value;
-    const char *end;
-    char temp[CA_CONFIG_URL_CAP];
-    size_t used = 0;
-    int escaped = 0;
-
-    if (start == NULL || key == NULL || dest == NULL || dest_size == 0) {
-        return CA_ERR_INVALID_ARG;
-    }
-
-    value = ca_json_find_key_in_range(start, len, key);
-    if (value == NULL) {
-        return CA_ERR_JSON;
-    }
-
-    value = ca_json_skip_ws(value);
-    end = start + len;
-    if (value >= end || *value != '"') {
-        return CA_ERR_JSON;
-    }
-
-    value++;
-    while (value < end && *value != '\0') {
-        char ch = *value;
-
-        if (escaped) {
-            escaped = 0;
-        } else if (ch == '\\') {
-            escaped = 1;
-            value++;
-            continue;
-        } else if (ch == '"') {
-            temp[used] = '\0';
-            return ca_config_copy_string(dest, dest_size, temp);
-        }
-
-        if (used + 1 >= sizeof(temp)) {
-            return CA_ERR_INVALID_ARG;
-        }
-        temp[used++] = ch;
-        value++;
-    }
-
-    return CA_ERR_JSON;
-}
-
-/* 读取整数值 / read an integer value */
-static ca_status_t ca_json_get_int(const char *start, size_t len, const char *key, int *out_value)
-{
-    const char *value;
-    const char *number;
-    char *parse_end;
-    long parsed;
-
-    if (start == NULL || key == NULL || out_value == NULL) {
-        return CA_ERR_INVALID_ARG;
-    }
-
-    value = ca_json_find_key_in_range(start, len, key);
-    if (value == NULL) {
-        return CA_ERR_JSON;
-    }
-
-    number = ca_json_skip_ws(value);
-    errno = 0;
-    parsed = strtol(number, &parse_end, 10);
-    if (errno != 0 || parse_end == number) {
-        return CA_ERR_JSON;
-    }
-
-    *out_value = (int)parsed;
-    return CA_OK;
-}
-
-/* 读取浮点值 / read a double value */
-static ca_status_t ca_json_get_double(const char *start,
-                                      size_t len,
-                                      const char *key,
-                                      double *out_value)
-{
-    const char *value;
-    const char *number;
-    char *parse_end;
-    double parsed;
-
-    if (start == NULL || key == NULL || out_value == NULL) {
-        return CA_ERR_INVALID_ARG;
-    }
-
-    value = ca_json_find_key_in_range(start, len, key);
-    if (value == NULL) {
-        return CA_ERR_JSON;
-    }
-
-    number = ca_json_skip_ws(value);
-    errno = 0;
-    parsed = strtod(number, &parse_end);
-    if (errno != 0 || parse_end == number) {
-        return CA_ERR_JSON;
-    }
-
-    *out_value = parsed;
-    return CA_OK;
-}
-
-/* 读取布尔值 / read a bool value */
-static ca_status_t ca_json_get_bool(const char *start, size_t len, const char *key, int *out_value)
-{
-    const char *value;
-    const char *end;
-    const char *after_bool;
-
-    if (start == NULL || key == NULL || out_value == NULL) {
-        return CA_ERR_INVALID_ARG;
-    }
-
-    value = ca_json_find_key_in_range(start, len, key);
-    if (value == NULL) {
-        return CA_ERR_JSON;
-    }
-
-    value = ca_json_skip_ws(value);
-    end = start + len;
-
-    if ((size_t)(end - value) >= 4 && memcmp(value, "true", 4) == 0) {
-        after_bool = value + 4;
-        if (after_bool < end && !isspace((unsigned char)*after_bool) &&
-            *after_bool != ',' && *after_bool != '}' && *after_bool != ']') {
-            return CA_ERR_JSON;
-        }
-        *out_value = 1;
-        return CA_OK;
-    }
-    if ((size_t)(end - value) >= 5 && memcmp(value, "false", 5) == 0) {
-        after_bool = value + 5;
-        if (after_bool < end && !isspace((unsigned char)*after_bool) &&
-            *after_bool != ',' && *after_bool != '}' && *after_bool != ']') {
-            return CA_ERR_JSON;
-        }
-        *out_value = 0;
-        return CA_OK;
-    }
-
-    return CA_ERR_JSON;
-}
+/* ---- JSON parsing ----
+ * Field extraction now goes through ca_json, while provider-selection logic stays here. */
 
 /* ---- 文件读取 / file I/O ---- */
 static ca_status_t ca_config_read_file(const char *path,
@@ -539,11 +226,11 @@ static ca_status_t ca_config_parse_mvp_json(ca_config_t *config, const char *jso
     }
 
     /* 1. 顶层 default_provider / top-level default_provider */
-    if (ca_json_get_string(json,
-                           json_len,
-                           "default_provider",
-                           config->default_provider,
-                           sizeof(config->default_provider)) != CA_OK) {
+    if (ca_json_get_string_range(json,
+                                 json_len,
+                                 "default_provider",
+                                 config->default_provider,
+                                 sizeof(config->default_provider)) != CA_OK) {
         ca_config_warn("default_provider", "missing or invalid, using default");
     }
 
@@ -556,14 +243,14 @@ static ca_status_t ca_config_parse_mvp_json(ca_config_t *config, const char *jso
 
     /* 3. 用 default_provider 的值作为 key，在 providers 对象里找对应 block
      *    Use default_provider value as the key into the "providers" object. */
-    if (ca_json_find_object(json, json_len, "providers", &providers_obj, &providers_len) == CA_OK) {
-        (void)ca_json_find_object(providers_obj, providers_len, selected_provider, &provider_obj, &provider_len);
+    if (ca_json_find_object_range(json, json_len, "providers", &providers_obj, &providers_len) == CA_OK) {
+        (void)ca_json_find_object_range(providers_obj, providers_len, selected_provider, &provider_obj, &provider_len);
     }
 
     /* 4. 如果 providers 下没找到，回退到顶层（兼容老配置格式）
      *    Fallback: look for the provider block at top level (backward compat). */
     if (provider_obj == NULL) {
-        (void)ca_json_find_object(json, json_len, selected_provider, &provider_obj, &provider_len);
+        (void)ca_json_find_object_range(json, json_len, selected_provider, &provider_obj, &provider_len);
     }
 
     if (provider_obj != NULL) {
@@ -573,11 +260,11 @@ static ca_status_t ca_config_parse_mvp_json(ca_config_t *config, const char *jso
          * Old Phase 2 configs may lack "type" — treat missing as openai_compat,
          * so existing user configs stay valid without changes.
          */
-        type_status = ca_json_get_string(provider_obj,
-                                         provider_len,
-                                         "type",
-                                         provider_type_text,
-                                         sizeof(provider_type_text));
+        type_status = ca_json_get_string_range(provider_obj,
+                                               provider_len,
+                                               "type",
+                                               provider_type_text,
+                                               sizeof(provider_type_text));
         if (type_status == CA_OK) {
             config->provider_type = ca_provider_type_from_string(provider_type_text);
         } else {
@@ -591,28 +278,28 @@ static ca_status_t ca_config_parse_mvp_json(ca_config_t *config, const char *jso
          * OpenAI-compatible source differences (NewAPI, DeepSeek, etc.).
          * Missing values stay generic so older configs continue to work.
          */
-        profile_status = ca_json_get_string(provider_obj,
-                                            provider_len,
-                                            "compat_profile",
-                                            compat_profile_text,
-                                            sizeof(compat_profile_text));
+        profile_status = ca_json_get_string_range(provider_obj,
+                                                  provider_len,
+                                                  "compat_profile",
+                                                  compat_profile_text,
+                                                  sizeof(compat_profile_text));
         if (profile_status == CA_OK) {
             config->compat_profile = ca_compat_profile_from_string(compat_profile_text);
         } else {
             ca_config_warn("providers.<selected>.compat_profile", "missing or invalid, using generic");
         }
 
-        if (ca_json_get_string(provider_obj, provider_len, "base_url", config->base_url, sizeof(config->base_url)) != CA_OK) {
+        if (ca_json_get_string_range(provider_obj, provider_len, "base_url", config->base_url, sizeof(config->base_url)) != CA_OK) {
             ca_config_warn("providers.<selected>.base_url", "missing or invalid, using default");
         }
-        if (ca_json_get_string(provider_obj,
-                               provider_len,
-                               "api_key_env",
-                               config->api_key_env,
-                               sizeof(config->api_key_env)) != CA_OK) {
+        if (ca_json_get_string_range(provider_obj,
+                                     provider_len,
+                                     "api_key_env",
+                                     config->api_key_env,
+                                     sizeof(config->api_key_env)) != CA_OK) {
             ca_config_warn("providers.<selected>.api_key_env", "missing or invalid, using default");
         }
-        if (ca_json_get_string(provider_obj, provider_len, "model", config->model, sizeof(config->model)) != CA_OK) {
+        if (ca_json_get_string_range(provider_obj, provider_len, "model", config->model, sizeof(config->model)) != CA_OK) {
             ca_config_warn("providers.<selected>.model", "missing or invalid, using default");
         }
     } else {
@@ -620,14 +307,14 @@ static ca_status_t ca_config_parse_mvp_json(ca_config_t *config, const char *jso
     }
 
     /* 5. agent 子对象 / agent sub-object */
-    if (ca_json_find_object(json, json_len, "agent", &agent_obj, &agent_len) == CA_OK) {
-        if (ca_json_get_int(agent_obj, agent_len, "max_steps", &config->agent_max_steps) != CA_OK) {
+    if (ca_json_find_object_range(json, json_len, "agent", &agent_obj, &agent_len) == CA_OK) {
+        if (ca_json_get_int_range(agent_obj, agent_len, "max_steps", &config->agent_max_steps) != CA_OK) {
             ca_config_warn("agent.max_steps", "missing or invalid, using default");
         }
-        if (ca_json_get_double(agent_obj, agent_len, "temperature", &config->agent_temperature) != CA_OK) {
+        if (ca_json_get_double_range(agent_obj, agent_len, "temperature", &config->agent_temperature) != CA_OK) {
             ca_config_warn("agent.temperature", "missing or invalid, using default");
         }
-        if (ca_json_get_bool(agent_obj, agent_len, "stream", &config->agent_stream) != CA_OK) {
+        if (ca_json_get_bool_range(agent_obj, agent_len, "stream", &config->agent_stream) != CA_OK) {
             ca_config_warn("agent.stream", "missing or invalid, using default");
         }
     } else {
@@ -635,19 +322,19 @@ static ca_status_t ca_config_parse_mvp_json(ca_config_t *config, const char *jso
     }
 
     /* 6. permission 子对象 / permission sub-object */
-    if (ca_json_find_object(json, json_len, "permission", &permission_obj, &permission_len) == CA_OK) {
-        if (ca_json_get_string(permission_obj,
-                               permission_len,
-                               "default_write",
-                               config->permission_default_write,
-                               sizeof(config->permission_default_write)) != CA_OK) {
+    if (ca_json_find_object_range(json, json_len, "permission", &permission_obj, &permission_len) == CA_OK) {
+        if (ca_json_get_string_range(permission_obj,
+                                     permission_len,
+                                     "default_write",
+                                     config->permission_default_write,
+                                     sizeof(config->permission_default_write)) != CA_OK) {
             ca_config_warn("permission.default_write", "missing or invalid, using default");
         }
-        if (ca_json_get_string(permission_obj,
-                               permission_len,
-                               "default_shell",
-                               config->permission_default_shell,
-                               sizeof(config->permission_default_shell)) != CA_OK) {
+        if (ca_json_get_string_range(permission_obj,
+                                     permission_len,
+                                     "default_shell",
+                                     config->permission_default_shell,
+                                     sizeof(config->permission_default_shell)) != CA_OK) {
             ca_config_warn("permission.default_shell", "missing or invalid, using default");
         }
     } else {

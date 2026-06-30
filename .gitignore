@@ -37,6 +37,8 @@ prompts/
 *.log
 *.tmp
 *.cache
+out.json
+*.out.json
 
 # IDE
 .vscode/
