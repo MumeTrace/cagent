@@ -70,6 +70,36 @@ static ca_status_t ca_builtin_echo_execute(const ca_tool_call_t *call, ca_tool_r
     return ca_builtin_write_echo_json(result->result_json, sizeof(result->result_json), call->arguments_json);
 }
 
+static ca_status_t ca_builtin_ask_test_execute(const ca_tool_call_t *call, ca_tool_result_t *result, void *ctx)
+{
+    (void)call;
+    (void)ctx;
+
+    if (result == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    memset(result, 0, sizeof(*result));
+    result->success = 1;
+    (void)ca_builtin_copy(result->tool_name, sizeof(result->tool_name), "ask_test");
+    return ca_builtin_copy(result->result_json, sizeof(result->result_json), "{\"ok\":true,\"permission\":\"ask\"}");
+}
+
+static ca_status_t ca_builtin_danger_test_execute(const ca_tool_call_t *call, ca_tool_result_t *result, void *ctx)
+{
+    (void)call;
+    (void)ctx;
+
+    if (result == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    memset(result, 0, sizeof(*result));
+    result->success = 1;
+    (void)ca_builtin_copy(result->tool_name, sizeof(result->tool_name), "danger_test");
+    return ca_builtin_copy(result->result_json, sizeof(result->result_json), "{\"ok\":true,\"permission\":\"dangerous\"}");
+}
+
 ca_status_t ca_register_builtin_tools(ca_tool_registry_t *registry)
 {
     /* noop / 空操作测试工具：验证注册和 executor 基础路径。 */
@@ -88,6 +118,22 @@ ca_status_t ca_register_builtin_tools(ca_tool_registry_t *registry)
         CA_TOOL_PERMISSION_SAFE,
         ca_builtin_echo_execute
     };
+    /* ask_test / ASK 权限测试工具：无副作用，只验证 y/N 确认路径。 */
+    static const ca_tool_def_t ask_test_tool = {
+        "ask_test",
+        "Permission test tool that requires y/N confirmation and has no side effects.",
+        "{\"type\":\"object\",\"properties\":{}}",
+        CA_TOOL_PERMISSION_ASK,
+        ca_builtin_ask_test_execute
+    };
+    /* danger_test / DANGEROUS 权限测试工具：无副作用，只验证 YES 强确认路径。 */
+    static const ca_tool_def_t danger_test_tool = {
+        "danger_test",
+        "Permission test tool that requires YES confirmation and has no side effects.",
+        "{\"type\":\"object\",\"properties\":{}}",
+        CA_TOOL_PERMISSION_DANGEROUS,
+        ca_builtin_danger_test_execute
+    };
     ca_status_t status;
 
     if (registry == NULL) {
@@ -99,5 +145,15 @@ ca_status_t ca_register_builtin_tools(ca_tool_registry_t *registry)
         return status;
     }
 
-    return ca_tool_registry_register(registry, &echo_tool);
+    status = ca_tool_registry_register(registry, &echo_tool);
+    if (status != CA_OK) {
+        return status;
+    }
+
+    status = ca_tool_registry_register(registry, &ask_test_tool);
+    if (status != CA_OK) {
+        return status;
+    }
+
+    return ca_tool_registry_register(registry, &danger_test_tool);
 }

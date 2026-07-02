@@ -21,6 +21,8 @@ add_executable(cagent
     src/config/config.c
     src/config/env.c
     src/json/json.c
+    src/permission/confirm_prompt.c
+    src/permission/permission.c
     src/project/ignore_rules.c
     src/project/project_detector.c
     src/project/project_indexer.c

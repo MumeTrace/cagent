@@ -1,4 +1,5 @@
 #include "ca_tool.h"
+#include "ca_permission.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -51,6 +52,7 @@ ca_status_t ca_tool_execute(const ca_tool_registry_t *registry,
                             void *ctx)
 {
     const ca_tool_def_t *tool;
+    ca_permission_decision_t decision;
     ca_status_t status;
 
     if (registry == NULL || call == NULL || result == NULL || call->tool_name[0] == '\0') {
@@ -67,6 +69,20 @@ ca_status_t ca_tool_execute(const ca_tool_registry_t *registry,
     if (tool == NULL) {
         (void)ca_tool_result_error(result, call->tool_name, "TOOL_NOT_FOUND", "Tool is not registered.");
         return CA_ERR_TOOL_NOT_FOUND;
+    }
+
+    /*
+     * Permission is centralized in the executor so tools cannot accidentally
+     * bypass it, and future Agent Loop calls follow the same path as /tool-test.
+     */
+    status = ca_permission_check_tool(tool, call, &decision);
+    if (status != CA_OK) {
+        (void)ca_tool_result_error(result, call->tool_name, "PERMISSION_CHECK_FAILED", "Permission check failed.");
+        return status;
+    }
+    if (decision != CA_PERMISSION_DECISION_ALLOW) {
+        (void)ca_tool_result_error(result, call->tool_name, "PERMISSION_DENIED", "User denied the operation.");
+        return CA_ERR_PERMISSION_DENIED;
     }
 
     status = tool->execute(call, result, ctx);

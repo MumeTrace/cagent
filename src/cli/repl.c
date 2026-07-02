@@ -3,7 +3,7 @@
  * CLI 前端：交互 REPL、单次 prompt 执行、stdin 管道模式、帮助和版本打印。
  *
  * CLI frontend: interactive REPL, one-shot prompt, stdin pipe, help & version.
- * Currently at Phase 4 — LLM / Agent Loop not yet wired; natural-language prompts just echo.
+ * LLM / Agent Loop are not wired yet; natural-language prompts still echo.
  */
 #include "ca_cli.h"
 
@@ -139,7 +139,7 @@ static ca_status_t ca_cli_print_repl_help(void)
     printf("  /tool-test     Execute a registered test tool\n");
     printf("  /exit, /quit   Exit the REPL\n");
     printf("\n");
-    printf("Natural language prompts are accepted, but LLM and Agent Loop are not implemented in Phase 4.\n");
+    printf("Natural language prompts are accepted, but LLM and Agent Loop are not implemented yet.\n");
     return CA_OK;
 }
 
@@ -203,8 +203,8 @@ static ca_status_t ca_cli_run_tool_test(const char *command_args,
     }
 
     /*
-     * /tool-test is only a manual executor probe. It bypasses LLM parsing and
-     * permission policy, but still goes through ca_tool_execute().
+     * /tool-test is only a manual executor probe. It bypasses LLM parsing, but
+     * still goes through ca_tool_execute() and the centralized permission gate.
      */
     status = ca_cli_copy_text(call.tool_name, sizeof(call.tool_name), trimmed_args);
     if (status != CA_OK) {
