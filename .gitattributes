@@ -1,18 +1,25 @@
-@"
 * text=auto
+.gitattributes text eol=lf
 
 *.c text eol=lf
 *.h text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
 *.cmake text eol=lf
 CMakeLists.txt text eol=lf
 
-*.md text eol=lf
-*.json text eol=lf
-*.yml text eol=lf
-*.yaml text eol=lf
-*.sh text eol=lf
-
+*.ps1 text eol=crlf
 *.bat text eol=crlf
 *.cmd text eol=crlf
-*.ps1 text eol=crlf
-"@ | Set-Content -Encoding UTF8 .gitattributes
+
+*.exe binary
+*.dll binary
+*.lib binary
+*.obj binary
+*.pdb binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.zip binary

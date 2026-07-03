@@ -13,6 +13,8 @@
 #include "ca_cli.h"
 #include "ca_config.h"
 #include "ca_file_tools.h"
+#include "ca_llm.h"
+#include "ca_platform.h"
 #include "ca_project.h"
 #include "ca_status.h"
 #include "ca_tool.h"
@@ -155,14 +157,35 @@ static ca_status_t ca_main_load_tools(ca_tool_registry_t *tools)
     return CA_OK;
 }
 
-/* ---- main: 参数解析 → 分发 / arg parsing → dispatch ---- */
-int main(int argc, char **argv)
+static ca_status_t ca_main_load_llm(const ca_config_t *config, ca_llm_provider_t *llm)
+{
+    if (config == NULL || llm == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    memset(llm, 0, sizeof(*llm));
+    if (config->provider_type == CA_PROVIDER_FAKE) {
+        return ca_llm_fake_provider_init(llm);
+    }
+    if (config->provider_type == CA_PROVIDER_OPENAI_COMPAT) {
+        return ca_llm_openai_compat_provider_init(llm, config);
+    }
+
+    fprintf(stderr,
+            "Unsupported provider type for Phase 8: %s\n",
+            ca_provider_type_to_string(config->provider_type));
+    return CA_ERR_LLM;
+}
+
+/* ---- main implementation: 参数解析 → 分发 / arg parsing → dispatch ---- */
+static int ca_main_run(int argc, char **argv)
 {
     ca_status_t status;
     char *prompt = NULL;
     ca_config_t config;
     ca_project_index_t project;
     ca_tool_registry_t tools;
+    ca_llm_provider_t llm;
     const char *config_path = NULL;
     int prompt_start = 0;
     int i;
@@ -182,7 +205,14 @@ int main(int argc, char **argv)
             ca_project_index_free(&project);
             return status;
         }
-        status = ca_cli_run_default(&config, &project, &tools);
+        status = ca_main_load_llm(&config, &llm);
+        if (status != CA_OK) {
+            ca_tool_registry_free(&tools);
+            ca_project_index_free(&project);
+            return status;
+        }
+        status = ca_cli_run_default(&config, &project, &tools, &llm);
+        ca_llm_provider_free(&llm);
         ca_tool_registry_free(&tools);
         ca_project_index_free(&project);
         return status;
@@ -239,7 +269,14 @@ int main(int argc, char **argv)
             ca_project_index_free(&project);
             return status;
         }
-        status = ca_cli_run_default(&config, &project, &tools);
+        status = ca_main_load_llm(&config, &llm);
+        if (status != CA_OK) {
+            ca_tool_registry_free(&tools);
+            ca_project_index_free(&project);
+            return status;
+        }
+        status = ca_cli_run_default(&config, &project, &tools, &llm);
+        ca_llm_provider_free(&llm);
         ca_tool_registry_free(&tools);
         ca_project_index_free(&project);
         return status;
@@ -264,10 +301,44 @@ int main(int argc, char **argv)
         return status;
     }
 
-    status = ca_cli_run_once(prompt, &config, &project, &tools);
+    status = ca_main_load_llm(&config, &llm);
+    if (status != CA_OK) {
+        ca_tool_registry_free(&tools);
+        ca_project_index_free(&project);
+        free(prompt);
+        return status;
+    }
+
+    status = ca_cli_run_once(prompt, &config, &project, &tools, &llm);
+    ca_llm_provider_free(&llm);
     ca_tool_registry_free(&tools);
     ca_project_index_free(&project);
     free(prompt);
 
     return status;
+}
+
+int main(int argc, char **argv)
+{
+    int app_argc = argc;
+    char **app_argv = argv;
+    int result;
+    ca_status_t status;
+
+    status = ca_console_init();
+    if (status != CA_OK) {
+        return status;
+    }
+
+    status = ca_platform_argv_to_utf8(argc, argv, &app_argc, &app_argv);
+    if (status != CA_OK) {
+        return status;
+    }
+
+    result = ca_main_run(app_argc, app_argv);
+    if (app_argv != argv) {
+        ca_platform_argv_free(app_argc, app_argv);
+    }
+
+    return result;
 }

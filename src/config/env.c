@@ -8,7 +8,7 @@
  *
  * 支持的环境变量 / supported env vars:
  *   CAGENT_PROVIDER        — provider 名称
- *   CAGENT_PROVIDER_TYPE   — provider 实现家族（openai_compat / gemini / claude）
+ *   CAGENT_PROVIDER_TYPE   — provider 实现家族（fake / openai_compat / gemini / claude）
  *   CAGENT_COMPAT_PROFILE  — OpenAI 兼容模式细节（generic / newapi / deepseek）
  *   CAGENT_BASE_URL        — API 端点 URL
  *   CAGENT_MODEL           — 模型名称

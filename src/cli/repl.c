@@ -6,6 +6,7 @@
  * LLM / Agent Loop are not wired yet; natural-language prompts still echo.
  */
 #include "ca_cli.h"
+#include "ca_agent.h"
 
 #include <ctype.h>
 #include <signal.h>
@@ -227,17 +228,25 @@ static ca_status_t ca_cli_run_tool_test(const char *command_args,
 }
 
 /* ---- prompt 处理（Phase 3 占位）/ prompt handler (Phase 3 placeholder) ---- */
-static ca_status_t ca_cli_handle_prompt(const char *prompt, const ca_config_t *config)
+static ca_status_t ca_cli_handle_prompt(const char *prompt,
+                                        const ca_config_t *config,
+                                        const ca_project_index_t *project,
+                                        const ca_tool_registry_t *tools,
+                                        ca_llm_provider_t *llm)
 {
+    ca_agent_t agent;
+    ca_status_t status;
+
     if (prompt == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
-    (void)config;
+    status = ca_agent_init(&agent, config, project, tools, llm);
+    if (status != CA_OK) {
+        return status;
+    }
 
-    printf("Phase 4 CLI received: %s\n", prompt);
-    printf("LLM, tools, and Agent Loop are not implemented yet.\n");
-    return CA_OK;
+    return ca_agent_run_turn(&agent, prompt);
 }
 
 /*
@@ -248,11 +257,12 @@ static ca_status_t ca_cli_handle_input(char *input,
                                        const ca_config_t *config,
                                        const ca_project_index_t *project,
                                        const ca_tool_registry_t *tools,
+                                       ca_llm_provider_t *llm,
                                        int *should_exit)
 {
     char *trimmed;
 
-    if (input == NULL || config == NULL || project == NULL || tools == NULL || should_exit == NULL) {
+    if (input == NULL || config == NULL || project == NULL || tools == NULL || llm == NULL || should_exit == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
@@ -295,7 +305,7 @@ static ca_status_t ca_cli_handle_input(char *input,
     }
 
     /* 普通文本 → 当成 prompt / plain text → treat as prompt */
-    return ca_cli_handle_prompt(trimmed, config);
+    return ca_cli_handle_prompt(trimmed, config, project, tools, llm);
 }
 
 /* ---- stdin 全部读入 / slurp entire stdin ---- */
@@ -385,29 +395,31 @@ ca_status_t ca_cli_print_version(void)
  * Default: if not a TTY → stdin mode; otherwise → interactive REPL. */
 ca_status_t ca_cli_run_default(const ca_config_t *config,
                                const ca_project_index_t *project,
-                               const ca_tool_registry_t *tools)
+                               const ca_tool_registry_t *tools,
+                               ca_llm_provider_t *llm)
 {
-    if (config == NULL || project == NULL || tools == NULL) {
+    if (config == NULL || project == NULL || tools == NULL || llm == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
     if (!CA_ISATTY(CA_FILENO(stdin))) {
-        return ca_cli_run_stdin(config, project, tools);
+        return ca_cli_run_stdin(config, project, tools, llm);
     }
 
-    return ca_cli_run_interactive(config, project, tools);
+    return ca_cli_run_interactive(config, project, tools, llm);
 }
 
 /* 交互 REPL 主循环 / interactive REPL main loop */
 ca_status_t ca_cli_run_interactive(const ca_config_t *config,
                                    const ca_project_index_t *project,
-                                   const ca_tool_registry_t *tools)
+                                   const ca_tool_registry_t *tools,
+                                   ca_llm_provider_t *llm)
 {
     char line[CA_REPL_LINE_CAP];
     void (*previous_handler)(int);
     ca_status_t final_status = CA_OK;
 
-    if (config == NULL || project == NULL || tools == NULL) {
+    if (config == NULL || project == NULL || tools == NULL || llm == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
@@ -439,7 +451,7 @@ ca_status_t ca_cli_run_interactive(const ca_config_t *config,
             break;
         }
 
-        status = ca_cli_handle_input(line, config, project, tools, &should_exit);
+        status = ca_cli_handle_input(line, config, project, tools, llm, &should_exit);
         if (status != CA_OK) {
             final_status = status;
             goto cleanup;
@@ -464,14 +476,15 @@ cleanup:
 ca_status_t ca_cli_run_once(const char *prompt,
                             const ca_config_t *config,
                             const ca_project_index_t *project,
-                            const ca_tool_registry_t *tools)
+                            const ca_tool_registry_t *tools,
+                            ca_llm_provider_t *llm)
 {
     char *copy;
     int should_exit = 0;
     ca_status_t status;
     size_t prompt_len;
 
-    if (prompt == NULL || config == NULL || project == NULL || tools == NULL) {
+    if (prompt == NULL || config == NULL || project == NULL || tools == NULL || llm == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
@@ -483,7 +496,7 @@ ca_status_t ca_cli_run_once(const char *prompt,
     }
 
     memcpy(copy, prompt, prompt_len + 1);
-    status = ca_cli_handle_input(copy, config, project, tools, &should_exit);
+    status = ca_cli_handle_input(copy, config, project, tools, llm, &should_exit);
     free(copy);
 
     return status;
@@ -492,12 +505,13 @@ ca_status_t ca_cli_run_once(const char *prompt,
 /* stdin 管道模式 / pipe mode */
 ca_status_t ca_cli_run_stdin(const ca_config_t *config,
                              const ca_project_index_t *project,
-                             const ca_tool_registry_t *tools)
+                             const ca_tool_registry_t *tools,
+                             ca_llm_provider_t *llm)
 {
     char *input = NULL;
     ca_status_t status = ca_cli_read_all_stdin(&input);
 
-    if (config == NULL || project == NULL || tools == NULL) {
+    if (config == NULL || project == NULL || tools == NULL || llm == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
@@ -505,7 +519,7 @@ ca_status_t ca_cli_run_stdin(const ca_config_t *config,
         return status;
     }
 
-    status = ca_cli_run_once(input, config, project, tools);
+    status = ca_cli_run_once(input, config, project, tools, llm);
     free(input);
 
     return status;

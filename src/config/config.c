@@ -38,6 +38,9 @@ ca_provider_type_t ca_provider_type_from_string(const char *value)
     if (strcmp(value, "claude") == 0) {
         return CA_PROVIDER_CLAUDE;
     }
+    if (strcmp(value, "fake") == 0) {
+        return CA_PROVIDER_FAKE;
+    }
 
     return CA_PROVIDER_UNKNOWN;
 }
@@ -51,6 +54,8 @@ const char *ca_provider_type_to_string(ca_provider_type_t type)
         return "gemini";
     case CA_PROVIDER_CLAUDE:
         return "claude";
+    case CA_PROVIDER_FAKE:
+        return "fake";
     case CA_PROVIDER_UNKNOWN:
     default:
         return "unknown";
@@ -355,10 +360,10 @@ ca_status_t ca_config_init_defaults(ca_config_t *config)
     memset(config, 0, sizeof(*config));
 
     /* 硬编码默认值，用户配置文件或环境变量可以覆盖 / hard-coded defaults, overridable */
-    if (ca_config_copy_string(config->default_provider, sizeof(config->default_provider), "openai_compat") != CA_OK ||
-        ca_config_copy_string(config->base_url, sizeof(config->base_url), "https://api.example.com/v1") != CA_OK ||
+    if (ca_config_copy_string(config->default_provider, sizeof(config->default_provider), "fake") != CA_OK ||
+        ca_config_copy_string(config->base_url, sizeof(config->base_url), "") != CA_OK ||
         ca_config_copy_string(config->api_key_env, sizeof(config->api_key_env), "CAGENT_API_KEY") != CA_OK ||
-        ca_config_copy_string(config->model, sizeof(config->model), "gpt-5.5") != CA_OK ||
+        ca_config_copy_string(config->model, sizeof(config->model), "fake") != CA_OK ||
         ca_config_copy_string(config->permission_default_write,
                               sizeof(config->permission_default_write),
                               "ask") != CA_OK ||
@@ -368,11 +373,11 @@ ca_status_t ca_config_init_defaults(ca_config_t *config)
         return CA_ERR_INVALID_ARG;
     }
 
-    config->provider_type = CA_PROVIDER_OPENAI_COMPAT;
+    config->provider_type = CA_PROVIDER_FAKE;
     config->compat_profile = CA_COMPAT_GENERIC;
     config->agent_max_steps = 12;
-    config->agent_temperature = 0.5;
-    config->agent_stream = 1;
+    config->agent_temperature = 0.2;
+    config->agent_stream = 0;
 
     return CA_OK;
 }

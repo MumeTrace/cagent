@@ -28,6 +28,7 @@ typedef enum ca_provider_type {
     CA_PROVIDER_OPENAI_COMPAT = 0,   /* OpenAI / v1 兼容接口 / OpenAI-compatible */
     CA_PROVIDER_GEMINI,              /* Google Gemini */
     CA_PROVIDER_CLAUDE,              /* Anthropic Claude */
+    CA_PROVIDER_FAKE,                /* Offline deterministic provider for tests */
     CA_PROVIDER_UNKNOWN
 } ca_provider_type_t;
 
