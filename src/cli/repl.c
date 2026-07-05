@@ -135,6 +135,7 @@ static ca_status_t ca_cli_print_repl_help(void)
     printf("Commands:\n");
     printf("  /help          Show this help\n");
     printf("  /config        Show current configuration summary\n");
+    printf("  /config init   Create the default config.json template\n");
     printf("  /project       Show current project summary\n");
     printf("  /tools         Show registered tools\n");
     printf("  /tool-test     Execute a registered test tool\n");
@@ -142,6 +143,87 @@ static ca_status_t ca_cli_print_repl_help(void)
     printf("\n");
     printf("Natural language prompts are accepted, but LLM and Agent Loop are not implemented yet.\n");
     return CA_OK;
+}
+
+static int ca_cli_confirm_overwrite_config(const char *path)
+{
+    char answer[32];
+    char *trimmed;
+
+    printf("Config file already exists: %s\n", path != NULL ? path : "<unknown>");
+    printf("Overwrite it? Type YES to confirm: ");
+    fflush(stdout);
+
+    if (fgets(answer, sizeof(answer), stdin) == NULL) {
+        printf("\nConfig init cancelled.\n");
+        return 0;
+    }
+
+    if (ca_trim_in_place(answer, &trimmed) != CA_OK) {
+        printf("Config init cancelled.\n");
+        return 0;
+    }
+
+    if (strcmp(trimmed, "YES") == 0) {
+        return 1;
+    }
+
+    printf("Config init cancelled.\n");
+    return 0;
+}
+
+static ca_status_t ca_cli_run_config_init_command(const char *command_args,
+                                                  const ca_config_t *config,
+                                                  int interactive)
+{
+    char path[CA_CONFIG_PATH_CAP];
+    char *mutable_args;
+    char *trimmed_args;
+    int force = 0;
+    ca_status_t status;
+
+    if (command_args == NULL || config == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    mutable_args = (char *)command_args;
+    if (ca_trim_in_place(mutable_args, &trimmed_args) != CA_OK) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    if (trimmed_args[0] != '\0') {
+        if (strcmp(trimmed_args, "--force") == 0) {
+            force = 1;
+        } else {
+            printf("Usage: /config init [--force]\n");
+            return CA_OK;
+        }
+    }
+
+    if (config->config_path[0] != '\0') {
+        status = ca_cli_copy_text(path, sizeof(path), config->config_path);
+        if (status != CA_OK) {
+            return status;
+        }
+    } else {
+        status = ca_config_default_path(path, sizeof(path));
+        if (status != CA_OK) {
+            return status;
+        }
+    }
+
+    /*
+     * REPL is interactive and can ask before destructive overwrites. The
+     * non-REPL command still requires explicit --force.
+     */
+    if (ca_config_file_exists(path) && !force && interactive) {
+        if (!ca_cli_confirm_overwrite_config(path)) {
+            return CA_OK;
+        }
+        force = 1;
+    }
+
+    return ca_config_init_file(path, force);
 }
 
 static void ca_cli_print_tool_result(ca_status_t status, const ca_tool_result_t *result)
@@ -282,6 +364,10 @@ static ca_status_t ca_cli_handle_input(char *input,
         if (strcmp(trimmed, "/config") == 0) {
             return ca_config_print_summary(config, stdout);
         }
+        if (strncmp(trimmed, "/config init", 12) == 0 &&
+            (trimmed[12] == '\0' || isspace((unsigned char)trimmed[12]))) {
+            return ca_cli_run_config_init_command(trimmed + 12, config, CA_ISATTY(CA_FILENO(stdin)));
+        }
         if (strcmp(trimmed, "/project") == 0) {
             ca_project_index_print_summary(project, stdout);
             return CA_OK;
@@ -380,6 +466,7 @@ ca_status_t ca_cli_print_help(void)
     printf("\n");
     printf("Modes:\n");
     printf("  cagent                 Start interactive REPL\n");
+    printf("  cagent config init     Create the default config.json template\n");
     printf("  cagent \"hello\"         Run a single prompt and exit\n");
     printf("  echo \"hello\" | cagent  Read one prompt from stdin and exit\n");
     return CA_OK;

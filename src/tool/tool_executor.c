@@ -72,6 +72,22 @@ ca_status_t ca_tool_execute(const ca_tool_registry_t *registry,
     }
 
     /*
+     * Preflight is for no-side-effect validation: malformed arguments,
+     * protected paths, and obvious state conflicts are rejected before asking
+     * the user for permission. Permission still owns the "may I do this?"
+     * decision, and execute still repeats critical checks before side effects.
+     */
+    if (tool->preflight != NULL) {
+        status = tool->preflight(call, result, ctx);
+        if (status != CA_OK) {
+            if (result->tool_name[0] == '\0') {
+                (void)ca_tool_copy(result->tool_name, sizeof(result->tool_name), call->tool_name);
+            }
+            return status;
+        }
+    }
+
+    /*
      * Permission is centralized in the executor so tools cannot accidentally
      * bypass it, and future Agent Loop calls follow the same path as /tool-test.
      */

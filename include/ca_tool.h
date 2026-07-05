@@ -35,6 +35,13 @@ typedef struct ca_tool_result {
     char error_message[CA_TOOL_ERROR_MESSAGE_CAP];
 } ca_tool_result_t;
 
+typedef ca_status_t (*ca_tool_preflight_fn)(const ca_tool_call_t *call,
+                                            ca_tool_result_t *result,
+                                            void *ctx);
+typedef ca_status_t (*ca_tool_execute_fn)(const ca_tool_call_t *call,
+                                          ca_tool_result_t *result,
+                                          void *ctx);
+
 /*
  * Shared tool execution context. Phase 5A only needs read-only access to the
  * workspace, project index, and config; later phases can extend this with
@@ -51,7 +58,8 @@ typedef struct ca_tool_def {
     const char *description;
     const char *schema_json;
     ca_tool_permission_t permission;
-    ca_status_t (*execute)(const ca_tool_call_t *call, ca_tool_result_t *result, void *ctx);
+    ca_tool_execute_fn execute;
+    ca_tool_preflight_fn preflight;
 } ca_tool_def_t;
 
 typedef struct ca_tool_registry {

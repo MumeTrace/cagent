@@ -87,7 +87,7 @@ static ca_status_t ca_main_load_config(const char *config_path, ca_config_t *con
 
     if (config->missing_config_file) {
         fprintf(stderr, "Config file not found: %s\n", config->config_path);
-        fprintf(stderr, "Using defaults. Set CAGENT_API_KEY/CAGENT_BASE_URL or create the config file.\n");
+        fprintf(stderr, "Using defaults. Run cagent config init to create a config template.\n");
     }
 
     return CA_OK;
@@ -177,6 +177,75 @@ static ca_status_t ca_main_load_llm(const ca_config_t *config, ca_llm_provider_t
     return CA_ERR_LLM;
 }
 
+static int ca_main_try_config_init(int argc, char **argv, int *out_result)
+{
+    const char *config_path = NULL;
+    int saw_config_command = 0;
+    int saw_init = 0;
+    int force = 0;
+    int i;
+
+    if (argv == NULL || out_result == NULL) {
+        return 0;
+    }
+
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--config") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "--config requires a path.\n");
+                *out_result = CA_ERR_INVALID_ARG;
+                return 1;
+            }
+            config_path = argv[i + 1];
+            i++;
+            continue;
+        }
+
+        if (strcmp(argv[i], "config") == 0) {
+            saw_config_command = 1;
+            continue;
+        }
+
+        if (strcmp(argv[i], "/config") == 0) {
+            if (i + 1 < argc && strcmp(argv[i + 1], "init") == 0) {
+                saw_config_command = 1;
+                continue;
+            }
+            return 0;
+        }
+
+        if (saw_config_command && strcmp(argv[i], "init") == 0) {
+            saw_init = 1;
+            continue;
+        }
+
+        if (saw_config_command && saw_init && strcmp(argv[i], "--force") == 0) {
+            force = 1;
+            continue;
+        }
+
+        if (saw_config_command) {
+            fprintf(stderr, "Usage: cagent [--config <path>] config init [--force]\n");
+            *out_result = CA_ERR_INVALID_ARG;
+            return 1;
+        }
+
+        return 0;
+    }
+
+    if (!saw_config_command) {
+        return 0;
+    }
+    if (!saw_init) {
+        fprintf(stderr, "Usage: cagent [--config <path>] config init [--force]\n");
+        *out_result = CA_ERR_INVALID_ARG;
+        return 1;
+    }
+
+    *out_result = ca_config_init_file(config_path, force);
+    return 1;
+}
+
 /* ---- main implementation: 参数解析 → 分发 / arg parsing → dispatch ---- */
 static int ca_main_run(int argc, char **argv)
 {
@@ -189,6 +258,10 @@ static int ca_main_run(int argc, char **argv)
     const char *config_path = NULL;
     int prompt_start = 0;
     int i;
+
+    if (ca_main_try_config_init(argc, argv, &i)) {
+        return i;
+    }
 
     /* 无参数 → 交互 REPL / no args → interactive */
     if (argc == 1) {

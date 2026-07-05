@@ -82,8 +82,11 @@ ca_status_t ca_config_init_defaults(ca_config_t *config);
 ca_status_t ca_config_default_path(char *buffer, size_t buffer_size);
 ca_status_t ca_config_load(ca_config_t *config, const char *config_path);
 ca_status_t ca_config_apply_env(ca_config_t *config);
+ca_status_t ca_config_init_file(const char *path, int force);
+int ca_config_file_exists(const char *path);
 
 /* ---- 调试/展示 / debug ---- */
 ca_status_t ca_config_print_summary(const ca_config_t *config, FILE *stream);
+ca_status_t ca_config_print_init_next_steps(const char *path, FILE *stream);
 
 #endif

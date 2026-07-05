@@ -14,12 +14,54 @@
 #include <string.h>
 
 #ifdef _WIN32
+#include <direct.h>
 #define CA_CONFIG_PATH_SEP "\\"
+#define CA_CONFIG_MKDIR(path) _mkdir(path)
 #else
+#include <sys/stat.h>
+#include <sys/types.h>
 #define CA_CONFIG_PATH_SEP "/"
+#define CA_CONFIG_MKDIR(path) mkdir((path), 0700)
 #endif
 
 #define CA_CONFIG_FILE_LIMIT (256u * 1024u)    /* 配置文件最大 256KB / max config file size */
+
+static const char *CA_CONFIG_INIT_TEMPLATE =
+    "{\n"
+    "  \"default_provider\": \"fake_local\",\n"
+    "  \"providers\": {\n"
+    "    \"fake_local\": {\n"
+    "      \"type\": \"fake\",\n"
+    "      \"compat_profile\": \"generic\",\n"
+    "      \"base_url\": \"\",\n"
+    "      \"api_key_env\": \"\",\n"
+    "      \"model\": \"fake\"\n"
+    "    },\n"
+    "    \"newapi_main\": {\n"
+    "      \"type\": \"openai_compat\",\n"
+    "      \"compat_profile\": \"newapi\",\n"
+    "      \"base_url\": \"https://your-newapi.example.com/v1\",\n"
+    "      \"api_key_env\": \"NEWAPI_API_KEY\",\n"
+    "      \"model\": \"gpt-4.1\"\n"
+    "    },\n"
+    "    \"deepseek_main\": {\n"
+    "      \"type\": \"openai_compat\",\n"
+    "      \"compat_profile\": \"deepseek\",\n"
+    "      \"base_url\": \"https://api.deepseek.com\",\n"
+    "      \"api_key_env\": \"DEEPSEEK_API_KEY\",\n"
+    "      \"model\": \"deepseek-chat\"\n"
+    "    }\n"
+    "  },\n"
+    "  \"agent\": {\n"
+    "    \"max_steps\": 8,\n"
+    "    \"temperature\": 0.2,\n"
+    "    \"stream\": false\n"
+    "  },\n"
+    "  \"permission\": {\n"
+    "    \"default_write\": \"ask\",\n"
+    "    \"default_shell\": \"ask\"\n"
+    "  }\n"
+    "}\n";
 
 /* ---- 字符串 <-> 枚举互转 / string ⇄ enum converters ---- */
 
@@ -122,6 +164,74 @@ static int ca_config_env_has_value(const char *value)
 static void ca_config_warn(const char *field, const char *message)
 {
     fprintf(stderr, "Warning: config %s: %s\n", field != NULL ? field : "<unknown>", message);
+}
+
+int ca_config_file_exists(const char *path)
+{
+    FILE *file;
+
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+
+    file = fopen(path, "rb");
+    if (file == NULL) {
+        return 0;
+    }
+
+    fclose(file);
+    return 1;
+}
+
+static ca_status_t ca_config_parent_dir(const char *path, char *out_dir, size_t out_size)
+{
+    const char *last_sep = NULL;
+    const char *cursor;
+    size_t len;
+
+    if (path == NULL || out_dir == NULL || out_size == 0) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    for (cursor = path; *cursor != '\0'; cursor++) {
+        if (*cursor == '/' || *cursor == '\\') {
+            last_sep = cursor;
+        }
+    }
+
+    if (last_sep == NULL) {
+        if (snprintf(out_dir, out_size, ".") < 0) {
+            return CA_ERR_INVALID_ARG;
+        }
+        return CA_OK;
+    }
+
+    len = (size_t)(last_sep - path);
+    if (len == 0 || len >= out_size) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    memcpy(out_dir, path, len);
+    out_dir[len] = '\0';
+    return CA_OK;
+}
+
+static ca_status_t ca_config_ensure_dir(const char *dir)
+{
+    if (dir == NULL || dir[0] == '\0' || strcmp(dir, ".") == 0) {
+        return CA_OK;
+    }
+
+    /*
+     * Config init creates only the known .cagent directory for the target path.
+     * Existing directories are fine; other mkdir failures are reported clearly.
+     */
+    if (CA_CONFIG_MKDIR(dir) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create config directory '%s': %s (errno=%d)\n", dir, strerror(errno), errno);
+        return CA_ERR_IO;
+    }
+
+    return CA_OK;
 }
 
 /* ---- JSON parsing ----
@@ -408,6 +518,80 @@ ca_status_t ca_config_default_path(char *buffer, size_t buffer_size)
         return CA_ERR_INVALID_ARG;
     }
 
+    return CA_OK;
+}
+
+ca_status_t ca_config_print_init_next_steps(const char *path, FILE *stream)
+{
+    if (path == NULL || stream == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    fprintf(stream, "Config file: %s\n", path);
+    fprintf(stream, "Default provider: fake_local\n");
+    fprintf(stream, "To use NewAPI, edit config.json and set default_provider to \"newapi_main\".\n");
+    fprintf(stream, "Then set your API key in PowerShell:\n");
+    fprintf(stream, "  $env:NEWAPI_API_KEY=\"your_key\"\n");
+    fprintf(stream, "Do not write API keys into config.json.\n");
+    return CA_OK;
+}
+
+ca_status_t ca_config_init_file(const char *path, int force)
+{
+    char default_path[CA_CONFIG_PATH_CAP];
+    char target_path[CA_CONFIG_PATH_CAP];
+    char parent_dir[CA_CONFIG_PATH_CAP];
+    const char *path_to_write = path;
+    FILE *file;
+    size_t template_len;
+    int existed;
+
+    if (path_to_write == NULL || path_to_write[0] == '\0') {
+        ca_status_t status = ca_config_default_path(default_path, sizeof(default_path));
+        if (status != CA_OK) {
+            return status;
+        }
+        path_to_write = default_path;
+    }
+
+    if (ca_config_copy_string(target_path, sizeof(target_path), path_to_write) != CA_OK) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    existed = ca_config_file_exists(target_path);
+    if (!force && existed) {
+        printf("Config file already exists: %s\n", target_path);
+        printf("Not overwriting. Use --force to replace it.\n");
+        return CA_OK;
+    }
+
+    if (ca_config_parent_dir(target_path, parent_dir, sizeof(parent_dir)) != CA_OK) {
+        fprintf(stderr, "Invalid config path: %s\n", target_path);
+        return CA_ERR_INVALID_ARG;
+    }
+    if (ca_config_ensure_dir(parent_dir) != CA_OK) {
+        return CA_ERR_IO;
+    }
+
+    file = fopen(target_path, "wb");
+    if (file == NULL) {
+        fprintf(stderr, "Failed to write config file '%s': %s (errno=%d)\n", target_path, strerror(errno), errno);
+        return CA_ERR_IO;
+    }
+
+    template_len = strlen(CA_CONFIG_INIT_TEMPLATE);
+    if (fwrite(CA_CONFIG_INIT_TEMPLATE, 1, template_len, file) != template_len) {
+        fprintf(stderr, "Failed to write config file '%s'.\n", target_path);
+        fclose(file);
+        return CA_ERR_IO;
+    }
+    if (fclose(file) != 0) {
+        fprintf(stderr, "Failed to close config file '%s': %s (errno=%d)\n", target_path, strerror(errno), errno);
+        return CA_ERR_IO;
+    }
+
+    printf("%s config file: %s\n", existed ? "Overwrote" : "Created", target_path);
+    (void)ca_config_print_init_next_steps(target_path, stdout);
     return CA_OK;
 }
 
