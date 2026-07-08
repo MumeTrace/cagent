@@ -1019,5 +1019,10 @@ ca_status_t ca_register_file_tools(ca_tool_registry_t *registry)
         }
     }
 
-    return ca_register_write_file_tools(registry);
+    status = ca_register_write_file_tools(registry);
+    if (status != CA_OK) {
+        return status;
+    }
+
+    return ca_register_diff_tools(registry);
 }
