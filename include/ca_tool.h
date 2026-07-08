@@ -15,6 +15,8 @@
 #define CA_TOOL_ERROR_CODE_CAP 64
 #define CA_TOOL_ERROR_MESSAGE_CAP 512
 
+typedef struct ca_edit_tracking ca_edit_tracking_t;
+
 typedef enum ca_tool_permission {
     CA_TOOL_PERMISSION_SAFE = 0,
     CA_TOOL_PERMISSION_ASK,
@@ -51,6 +53,7 @@ typedef struct ca_tool_context {
     const char *workspace_root;
     const ca_project_index_t *project_index;
     const ca_config_t *config;
+    ca_edit_tracking_t *edit_tracking;
 } ca_tool_context_t;
 
 typedef struct ca_tool_def {

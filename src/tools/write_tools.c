@@ -4,6 +4,7 @@
  * before permission prompts; execute repeats critical checks before writing.
  */
 #include "ca_file_tools.h"
+#include "ca_edit_tracking.h"
 #include "ca_json.h"
 
 #include <ctype.h>
@@ -508,6 +509,10 @@ static ca_status_t ca_wt_execute_create_file(const ca_tool_call_t *call,
     if (status != CA_OK) {
         return ca_wt_result_error(result, "create_file", "WRITE_FAILED", "Failed to create file.");
     }
+    if (ctx->edit_tracking != NULL &&
+        ca_edit_tracking_note_write(ctx->edit_tracking, ctx->workspace_root, rel_path) != CA_OK) {
+        return ca_wt_result_error(result, "create_file", "TRACKING_FAILED", "Failed to update edit tracking.");
+    }
 
     return ca_wt_result_success(result, "create_file", rel_path, bytes_written, !existed);
 }
@@ -548,6 +553,10 @@ static ca_status_t ca_wt_execute_write_file(const ca_tool_call_t *call,
     if (status != CA_OK) {
         return ca_wt_result_error(result, "write_file", "WRITE_FAILED", "Failed to write file.");
     }
+    if (ctx->edit_tracking != NULL &&
+        ca_edit_tracking_note_write(ctx->edit_tracking, ctx->workspace_root, rel_path) != CA_OK) {
+        return ca_wt_result_error(result, "write_file", "TRACKING_FAILED", "Failed to update edit tracking.");
+    }
 
     return ca_wt_result_success(result, "write_file", rel_path, bytes_written, !existed);
 }
@@ -582,6 +591,10 @@ static ca_status_t ca_wt_execute_append_file(const ca_tool_call_t *call,
     status = ca_wt_write_bytes(abs_path, args.content, "ab", &bytes_written);
     if (status != CA_OK) {
         return ca_wt_result_error(result, "append_file", "WRITE_FAILED", "Failed to append file.");
+    }
+    if (ctx->edit_tracking != NULL &&
+        ca_edit_tracking_note_write(ctx->edit_tracking, ctx->workspace_root, rel_path) != CA_OK) {
+        return ca_wt_result_error(result, "append_file", "TRACKING_FAILED", "Failed to update edit tracking.");
     }
 
     return ca_wt_result_success(result, "append_file", rel_path, bytes_written, !existed);

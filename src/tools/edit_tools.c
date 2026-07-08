@@ -4,6 +4,7 @@
  * apply_patch: it only performs byte-exact old_string/new_string replacement.
  */
 #include "ca_file_tools.h"
+#include "ca_edit_tracking.h"
 #include "ca_json.h"
 
 #include <ctype.h>
@@ -750,6 +751,29 @@ static ca_status_t ca_et_preflight_edit_file(const ca_tool_call_t *call,
         return ca_et_result_error(result, error_code, error_message);
     }
 
+    /*
+     * read-before-edit is a runtime safety rule, not just a prompt hint.
+     * It prevents stale or invented old_string edits from reaching the
+     * permission prompt. apply_patch should reuse this same check later.
+     */
+    if (ctx->edit_tracking == NULL) {
+        ca_et_args_free(&args);
+        return ca_et_result_error(result, "READ_REQUIRED", "read_file or read_file_range must succeed before edit_file.");
+    }
+    status = ca_edit_tracking_check_fresh(ctx->edit_tracking, ctx->workspace_root, rel_path);
+    if (status == CA_ERR_NOT_FOUND) {
+        ca_et_args_free(&args);
+        return ca_et_result_error(result, "READ_REQUIRED", "read_file or read_file_range must succeed before edit_file.");
+    }
+    if (status == CA_ERR_PERMISSION_DENIED) {
+        ca_et_args_free(&args);
+        return ca_et_result_error(result, "FILE_CHANGED_SINCE_READ", "Target file changed after it was last read.");
+    }
+    if (status != CA_OK) {
+        ca_et_args_free(&args);
+        return ca_et_result_error(result, "TRACKING_FAILED", "Failed to verify read-before-edit state.");
+    }
+
     status = ca_et_read_text_file(abs_path, &old_content, &old_size);
     if (status != CA_OK) {
         ca_et_args_free(&args);
@@ -814,6 +838,24 @@ static ca_status_t ca_et_execute_edit_file(const ca_tool_call_t *call,
     if (status != CA_OK) {
         ca_et_args_free(&args);
         return ca_et_result_error(result, error_code, error_message);
+    }
+
+    if (ctx->edit_tracking == NULL) {
+        ca_et_args_free(&args);
+        return ca_et_result_error(result, "READ_REQUIRED", "read_file or read_file_range must succeed before edit_file.");
+    }
+    status = ca_edit_tracking_check_fresh(ctx->edit_tracking, ctx->workspace_root, rel_path);
+    if (status == CA_ERR_NOT_FOUND) {
+        ca_et_args_free(&args);
+        return ca_et_result_error(result, "READ_REQUIRED", "read_file or read_file_range must succeed before edit_file.");
+    }
+    if (status == CA_ERR_PERMISSION_DENIED) {
+        ca_et_args_free(&args);
+        return ca_et_result_error(result, "FILE_CHANGED_SINCE_READ", "Target file changed after it was last read.");
+    }
+    if (status != CA_OK) {
+        ca_et_args_free(&args);
+        return ca_et_result_error(result, "TRACKING_FAILED", "Failed to verify read-before-edit state.");
     }
 
     status = ca_et_read_text_file(abs_path, &old_content, &old_size);
@@ -883,6 +925,15 @@ static ca_status_t ca_et_execute_edit_file(const ca_tool_call_t *call,
             free(new_content);
             ca_et_args_free(&args);
             return ca_et_result_error(result, "WRITE_FAILED", "Failed to write edited file.");
+        }
+        if (ca_edit_tracking_note_write(ctx->edit_tracking, ctx->workspace_root, rel_path) != CA_OK) {
+            free(diff);
+            free(escaped_path);
+            free(escaped_diff);
+            free(old_content);
+            free(new_content);
+            ca_et_args_free(&args);
+            return ca_et_result_error(result, "TRACKING_FAILED", "Failed to update edit tracking after write.");
         }
     }
 

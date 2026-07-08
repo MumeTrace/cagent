@@ -39,6 +39,7 @@ typedef struct ca_agent {
     const ca_project_index_t *project;
     const ca_tool_registry_t *tools;
     ca_llm_provider_t *llm;
+    ca_edit_tracking_t *edit_tracking;
     int max_steps;
 } ca_agent_t;
 

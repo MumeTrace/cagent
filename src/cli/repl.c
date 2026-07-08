@@ -7,6 +7,7 @@
  */
 #include "ca_cli.h"
 #include "ca_agent.h"
+#include "ca_edit_tracking.h"
 
 #include <ctype.h>
 #include <signal.h>
@@ -246,7 +247,8 @@ static void ca_cli_print_tool_result(ca_status_t status, const ca_tool_result_t 
 static ca_status_t ca_cli_run_tool_test(const char *command_args,
                                         const ca_config_t *config,
                                         const ca_project_index_t *project,
-                                        const ca_tool_registry_t *tools)
+                                        const ca_tool_registry_t *tools,
+                                        ca_edit_tracking_t *edit_tracking)
 {
     ca_tool_call_t call;
     ca_tool_context_t ctx;
@@ -303,6 +305,7 @@ static ca_status_t ca_cli_run_tool_test(const char *command_args,
     ctx.workspace_root = project->workspace_root;
     ctx.project_index = project;
     ctx.config = config;
+    ctx.edit_tracking = edit_tracking;
 
     status = ca_tool_execute(tools, &call, &result, &ctx);
     ca_cli_print_tool_result(status, &result);
@@ -314,7 +317,8 @@ static ca_status_t ca_cli_handle_prompt(const char *prompt,
                                         const ca_config_t *config,
                                         const ca_project_index_t *project,
                                         const ca_tool_registry_t *tools,
-                                        ca_llm_provider_t *llm)
+                                        ca_llm_provider_t *llm,
+                                        ca_edit_tracking_t *edit_tracking)
 {
     ca_agent_t agent;
     ca_status_t status;
@@ -327,6 +331,7 @@ static ca_status_t ca_cli_handle_prompt(const char *prompt,
     if (status != CA_OK) {
         return status;
     }
+    agent.edit_tracking = edit_tracking;
 
     return ca_agent_run_turn(&agent, prompt);
 }
@@ -340,6 +345,7 @@ static ca_status_t ca_cli_handle_input(char *input,
                                        const ca_project_index_t *project,
                                        const ca_tool_registry_t *tools,
                                        ca_llm_provider_t *llm,
+                                       ca_edit_tracking_t *edit_tracking,
                                        int *should_exit)
 {
     char *trimmed;
@@ -378,7 +384,7 @@ static ca_status_t ca_cli_handle_input(char *input,
         }
         if (strncmp(trimmed, "/tool-test", 10) == 0 &&
             (trimmed[10] == '\0' || isspace((unsigned char)trimmed[10]))) {
-            return ca_cli_run_tool_test(trimmed + 10, config, project, tools);
+            return ca_cli_run_tool_test(trimmed + 10, config, project, tools, edit_tracking);
         }
         if (strcmp(trimmed, "/exit") == 0 || strcmp(trimmed, "/quit") == 0) {
             *should_exit = 1;
@@ -391,7 +397,7 @@ static ca_status_t ca_cli_handle_input(char *input,
     }
 
     /* 普通文本 → 当成 prompt / plain text → treat as prompt */
-    return ca_cli_handle_prompt(trimmed, config, project, tools, llm);
+    return ca_cli_handle_prompt(trimmed, config, project, tools, llm, edit_tracking);
 }
 
 /* ---- stdin 全部读入 / slurp entire stdin ---- */
@@ -503,6 +509,7 @@ ca_status_t ca_cli_run_interactive(const ca_config_t *config,
                                    ca_llm_provider_t *llm)
 {
     char line[CA_REPL_LINE_CAP];
+    ca_edit_tracking_t edit_tracking;
     void (*previous_handler)(int);
     ca_status_t final_status = CA_OK;
 
@@ -513,6 +520,7 @@ ca_status_t ca_cli_run_interactive(const ca_config_t *config,
     /* 挂 SIGINT handler，Ctrl+C 不会直接退出 / catch Ctrl+C gracefully */
     previous_handler = signal(SIGINT, ca_cli_on_sigint);
     (void)previous_handler;
+    (void)ca_edit_tracking_init(&edit_tracking);
 
     ca_cli_print_banner(config);
 
@@ -538,7 +546,7 @@ ca_status_t ca_cli_run_interactive(const ca_config_t *config,
             break;
         }
 
-        status = ca_cli_handle_input(line, config, project, tools, llm, &should_exit);
+        status = ca_cli_handle_input(line, config, project, tools, llm, &edit_tracking, &should_exit);
         if (status != CA_OK) {
             final_status = status;
             goto cleanup;
@@ -560,11 +568,12 @@ cleanup:
 }
 
 /* 单次 prompt 执行 / one-shot prompt */
-ca_status_t ca_cli_run_once(const char *prompt,
-                            const ca_config_t *config,
-                            const ca_project_index_t *project,
-                            const ca_tool_registry_t *tools,
-                            ca_llm_provider_t *llm)
+static ca_status_t ca_cli_run_once_with_tracking(const char *prompt,
+                                                 const ca_config_t *config,
+                                                 const ca_project_index_t *project,
+                                                 const ca_tool_registry_t *tools,
+                                                 ca_llm_provider_t *llm,
+                                                 ca_edit_tracking_t *edit_tracking)
 {
     char *copy;
     int should_exit = 0;
@@ -583,10 +592,25 @@ ca_status_t ca_cli_run_once(const char *prompt,
     }
 
     memcpy(copy, prompt, prompt_len + 1);
-    status = ca_cli_handle_input(copy, config, project, tools, llm, &should_exit);
+    status = ca_cli_handle_input(copy, config, project, tools, llm, edit_tracking, &should_exit);
     free(copy);
 
     return status;
+}
+
+ca_status_t ca_cli_run_once(const char *prompt,
+                            const ca_config_t *config,
+                            const ca_project_index_t *project,
+                            const ca_tool_registry_t *tools,
+                            ca_llm_provider_t *llm)
+{
+    ca_edit_tracking_t edit_tracking;
+
+    if (ca_edit_tracking_init(&edit_tracking) != CA_OK) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    return ca_cli_run_once_with_tracking(prompt, config, project, tools, llm, &edit_tracking);
 }
 
 /* stdin 管道模式 / pipe mode */
@@ -595,19 +619,76 @@ ca_status_t ca_cli_run_stdin(const ca_config_t *config,
                              const ca_tool_registry_t *tools,
                              ca_llm_provider_t *llm)
 {
-    char *input = NULL;
-    ca_status_t status = ca_cli_read_all_stdin(&input);
+    char first_line[CA_REPL_LINE_CAP];
+    char first_copy[CA_REPL_LINE_CAP];
+    char *trimmed_first;
+    ca_edit_tracking_t edit_tracking;
+    ca_status_t status;
 
     if (config == NULL || project == NULL || tools == NULL || llm == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
-    if (status != CA_OK) {
-        return status;
+    if (ca_edit_tracking_init(&edit_tracking) != CA_OK) {
+        return CA_ERR_INVALID_ARG;
     }
 
-    status = ca_cli_run_once(input, config, project, tools, llm);
-    free(input);
+    if (fgets(first_line, sizeof(first_line), stdin) == NULL) {
+        if (ferror(stdin)) {
+            return CA_ERR_IO;
+        }
+        return ca_cli_run_once_with_tracking("", config, project, tools, llm, &edit_tracking);
+    }
+
+    (void)ca_cli_copy_text(first_copy, sizeof(first_copy), first_line);
+    if (ca_trim_in_place(first_copy, &trimmed_first) == CA_OK && trimmed_first[0] == '/') {
+        char line[CA_REPL_LINE_CAP];
+        int should_exit = 0;
+
+        /*
+         * Piped slash commands are treated like a non-interactive REPL so
+         * read-before-edit tracking can be tested in one process. Permission
+         * prompts still read from stdin, so a following "y" line is consumed
+         * by the Permission Manager, not by this loop.
+         */
+        status = ca_cli_handle_input(first_line, config, project, tools, llm, &edit_tracking, &should_exit);
+        if (status != CA_OK || should_exit) {
+            return status;
+        }
+        while (fgets(line, sizeof(line), stdin) != NULL) {
+            status = ca_cli_handle_input(line, config, project, tools, llm, &edit_tracking, &should_exit);
+            if (status != CA_OK || should_exit) {
+                return status;
+            }
+        }
+        return ferror(stdin) ? CA_ERR_IO : CA_OK;
+    }
+
+    {
+        char *rest = NULL;
+        char *input;
+        size_t first_len;
+        size_t rest_len;
+
+        status = ca_cli_read_all_stdin(&rest);
+        if (status != CA_OK) {
+            return status;
+        }
+
+        first_len = strlen(first_line);
+        rest_len = strlen(rest);
+        input = (char *)malloc(first_len + rest_len + 1u);
+        if (input == NULL) {
+            free(rest);
+            return CA_ERR_NO_MEMORY;
+        }
+        memcpy(input, first_line, first_len);
+        memcpy(input + first_len, rest, rest_len + 1u);
+        free(rest);
+
+        status = ca_cli_run_once_with_tracking(input, config, project, tools, llm, &edit_tracking);
+        free(input);
+    }
 
     return status;
 }

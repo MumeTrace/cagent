@@ -22,6 +22,7 @@ add_executable(cagent
     src/main.c
     src/agent/action_parser.c
     src/agent/agent.c
+    src/agent/edit_tracking.c
     src/agent/prompt_builder.c
     src/cli/repl.c
     src/config/config.c

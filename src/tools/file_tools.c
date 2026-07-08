@@ -5,6 +5,7 @@
  * delete, or execute anything.
  */
 #include "ca_file_tools.h"
+#include "ca_edit_tracking.h"
 #include "ca_json.h"
 
 #include <ctype.h>
@@ -701,6 +702,13 @@ static ca_status_t ca_ft_execute_read_file(const ca_tool_call_t *call, ca_tool_r
         return ca_ft_result_error(result, "read_file", "RESULT_TOO_LARGE", "File content exceeded result buffer.");
     }
 
+    if (ctx->edit_tracking != NULL) {
+        status = ca_edit_tracking_note_read(ctx->edit_tracking, ctx->workspace_root, rel_path);
+        if (status != CA_OK) {
+            return ca_ft_result_error(result, "read_file", "TRACKING_FAILED", "Failed to record read-before-edit state.");
+        }
+    }
+
     return ca_ft_result_success(result, "read_file");
 }
 
@@ -790,6 +798,13 @@ static ca_status_t ca_ft_execute_read_file_range(const ca_tool_call_t *call,
     ca_json_appendf(&json, "],\"truncated\":%s}", truncated ? "true" : "false");
     if (json.overflow) {
         return ca_ft_result_error(result, "read_file_range", "RESULT_TOO_LARGE", "Line range exceeded result buffer.");
+    }
+
+    if (ctx->edit_tracking != NULL) {
+        status = ca_edit_tracking_note_read(ctx->edit_tracking, ctx->workspace_root, rel_path);
+        if (status != CA_OK) {
+            return ca_ft_result_error(result, "read_file_range", "TRACKING_FAILED", "Failed to record read-before-edit state.");
+        }
     }
 
     return ca_ft_result_success(result, "read_file_range");

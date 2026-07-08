@@ -152,6 +152,7 @@ ca_status_t ca_agent_run_turn(ca_agent_t *agent, const char *user_input)
             ctx.workspace_root = agent->project->workspace_root;
             ctx.project_index = agent->project;
             ctx.config = agent->config;
+            ctx.edit_tracking = agent->edit_tracking;
 
             status = ca_tool_execute(agent->tools, &call, &result, &ctx);
             printf("[agent] tool_result: %s\n", result.success ? "success" : "failed");
