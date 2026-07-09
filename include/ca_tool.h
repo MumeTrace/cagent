@@ -9,7 +9,7 @@
 #include "ca_status.h"
 
 #define CA_TOOL_NAME_CAP 64
-#define CA_TOOL_ARGS_CAP 4096
+#define CA_TOOL_ARGS_CAP 131072
 #define CA_TOOL_REASON_CAP 512
 #define CA_TOOL_RESULT_CAP 131072
 #define CA_TOOL_ERROR_CODE_CAP 64

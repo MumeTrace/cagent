@@ -12,5 +12,6 @@ ca_status_t ca_register_file_tools(ca_tool_registry_t *registry);
 ca_status_t ca_register_write_file_tools(ca_tool_registry_t *registry);
 ca_status_t ca_register_diff_tools(ca_tool_registry_t *registry);
 ca_status_t ca_register_edit_tools(ca_tool_registry_t *registry);
+ca_status_t ca_register_patch_tools(ca_tool_registry_t *registry);
 
 #endif

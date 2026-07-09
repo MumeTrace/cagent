@@ -44,6 +44,7 @@ add_executable(cagent
     src/tools/diff_tools.c
     src/tools/edit_tools.c
     src/tools/file_tools.c
+    src/tools/patch_tools.c
     src/tools/write_tools.c
 )
 
