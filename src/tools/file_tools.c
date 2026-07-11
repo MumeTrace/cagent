@@ -6,6 +6,7 @@
  */
 #include "ca_file_tools.h"
 #include "ca_command_tools.h"
+#include "ca_git_tools.h"
 #include "ca_edit_tracking.h"
 #include "ca_json.h"
 
@@ -1055,5 +1056,10 @@ ca_status_t ca_register_file_tools(ca_tool_registry_t *registry)
         return status;
     }
 
-    return ca_register_command_tools(registry);
+    status = ca_register_command_tools(registry);
+    if (status != CA_OK) {
+        return status;
+    }
+
+    return ca_register_git_tools(registry);
 }

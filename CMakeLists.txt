@@ -18,6 +18,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(CAGENT_ENABLE_SHELL "Enable guarded execute_command tool" ON)
+option(CAGENT_ENABLE_GIT "Enable read-only Git tools" ON)
 
 # 可执行文件 / executable
 add_executable(cagent
@@ -47,6 +48,7 @@ add_executable(cagent
     src/tools/diff_tools.c
     src/tools/edit_tools.c
     src/tools/file_tools.c
+    src/tools/git_tools.c
     src/tools/patch_tools.c
     src/tools/write_tools.c
 )
@@ -71,6 +73,10 @@ target_compile_definitions(cagent
 
 if(CAGENT_ENABLE_SHELL)
     target_compile_definitions(cagent PRIVATE CAGENT_ENABLE_SHELL=1)
+endif()
+
+if(CAGENT_ENABLE_GIT)
+    target_compile_definitions(cagent PRIVATE CAGENT_ENABLE_GIT=1)
 endif()
 
 if(WIN32)
