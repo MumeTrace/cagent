@@ -17,6 +17,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+option(CAGENT_ENABLE_SHELL "Enable guarded execute_command tool" ON)
+
 # 可执行文件 / executable
 add_executable(cagent
     src/main.c
@@ -41,12 +43,19 @@ add_executable(cagent
     src/tool/builtin_tools.c
     src/tool/tool_executor.c
     src/tool/tool_registry.c
+    src/tools/command_tools.c
     src/tools/diff_tools.c
     src/tools/edit_tools.c
     src/tools/file_tools.c
     src/tools/patch_tools.c
     src/tools/write_tools.c
 )
+
+if(WIN32)
+    target_sources(cagent PRIVATE src/platform/process_win32.c)
+else()
+    target_sources(cagent PRIVATE src/platform/process_posix.c)
+endif()
 
 # 头文件搜索路径 / include path
 target_include_directories(cagent
@@ -59,6 +68,10 @@ target_compile_definitions(cagent
     PRIVATE
         CAGENT_VERSION="${PROJECT_VERSION}"
 )
+
+if(CAGENT_ENABLE_SHELL)
+    target_compile_definitions(cagent PRIVATE CAGENT_ENABLE_SHELL=1)
+endif()
 
 if(WIN32)
     target_link_libraries(cagent PRIVATE shell32)

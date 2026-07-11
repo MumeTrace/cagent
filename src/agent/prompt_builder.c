@@ -14,7 +14,8 @@ static const char *CA_CORE_TOOL_PROMPT =
     "- apply_patch [ask]: {\"patch\":\"--- src/main.c\\n+++ src/main.c\\n@@ -1,3 +1,3 @@\\n int main(void) {\\n-    return 1;\\n+    return 0;\\n }\\n\",\"require_read\":true}\n"
     "- create_file [ask]: {\"path\":\"src/new_file.c\",\"content\":\"text\"}\n"
     "- write_file [ask]: {\"path\":\"src/main.c\",\"content\":\"full file text\",\"allow_create\":false}\n"
-    "- append_file [ask]: {\"path\":\"notes.txt\",\"content\":\"text to append\"}\n\n"
+    "- append_file [ask]: {\"path\":\"notes.txt\",\"content\":\"text to append\"}\n"
+    "- execute_command [ask]: {\"command\":\"cmake --build build\",\"timeout_ms\":30000}\n\n"
     "Tool Protocol:\n"
     "Return exactly one JSON object, with no markdown, no code fences, and no explanatory prose.\n"
     "For a tool call use:\n"
@@ -33,12 +34,17 @@ static const char *CA_CORE_TOOL_PROMPT =
     "- Use write_file only when a whole-file rewrite is truly needed.\n"
     "- Use create_file for new files and append_file for appending text.\n"
     "- Use preview_file_change when you need to inspect a full replacement diff before writing.\n"
+    "- Use execute_command for non-interactive build, test, lint, and version-check commands when verification is requested.\n"
+    "- Do not request dangerous, interactive, chained, background, network download, or workspace-bypassing commands.\n"
+    "- If execute_command returns exit_code != 0, inspect stdout/stderr and continue debugging instead of treating the tool as failed.\n"
+    "- Never claim a command has run until a tool_result reports success=true.\n"
     "- Never claim a file was modified until a tool_result reports success=true.\n\n"
     "Tool error handling:\n"
     "- OLD_STRING_NOT_FOUND: read the file again before trying another edit.\n"
     "- OLD_STRING_NOT_UNIQUE: use a longer exact old_string, or replace_all=true only when intentional.\n"
     "- PERMISSION_DENIED: stop modifying files and explain that the user denied the operation.\n"
     "- PATH_OUTSIDE_WORKSPACE or PROTECTED_PATH: do not try to bypass the sandbox.\n"
+    "- COMMAND_REJECTED: choose a simpler non-interactive command or explain why the runtime refused it.\n"
     "- FILE_TOO_LARGE or result truncated: use read_file_range or search_code to narrow context.\n\n";
 
 static ca_status_t ca_prompt_append(char *out, size_t out_size, size_t *used, const char *format, ...)
