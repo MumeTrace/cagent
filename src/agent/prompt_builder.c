@@ -33,6 +33,8 @@ static const char *CA_CORE_TOOL_PROMPT =
     "For completion use:\n"
     "{\"type\":\"final_answer\",\"content\":\"...\"}\n\n"
     "Editing strategy:\n"
+    "- Git is optional. Ordinary code changes do not require a Git repository.\n"
+    "- First understand the code with search_code, read_file, or read_file_range.\n"
     "- To modify an existing file, first read it with read_file or read_file_range.\n"
     "- Prefer edit_file for precise local edits. old_string must be copied exactly from tool output.\n"
     "- Use apply_patch for multiple related edits after reading every target file.\n"
@@ -45,10 +47,13 @@ static const char *CA_CORE_TOOL_PROMPT =
     "- Use create_file for new files and append_file for appending text.\n"
     "- Use preview_file_change when you need to inspect a full replacement diff before writing.\n"
     "- Use execute_command for non-interactive build, test, lint, and version-check commands when verification is requested.\n"
-    "- Use git_status after edits to inspect which files changed.\n"
-    "- Use git_diff to inspect exact workspace or file changes before summarizing.\n"
-    "- Use git_log and git_show only to inspect local history.\n"
+    "- If Git is available, use git_status after edits to inspect which files changed.\n"
+    "- If Git is available, use git_diff to inspect exact workspace or file changes before summarizing.\n"
+    "- Use git_log and git_show only to inspect local history when Git is available.\n"
+    "- If Git is unavailable or this is not a Git repository, continue with file tools and execute_command.\n"
+    "- Do not abandon a normal code-editing task only because Git tools failed.\n"
     "- Before git_commit, call git_status and git_diff, then git_add only explicit paths.\n"
+    "- Do not commit unless the user explicitly asks for a commit.\n"
     "- Do not git_add the whole repository; always list exact paths.\n"
     "- git_restore_file discards working tree changes and should be used only when the user explicitly asks.\n"
     "- Do not request dangerous, interactive, chained, background, network download, or workspace-bypassing commands.\n"
@@ -63,6 +68,7 @@ static const char *CA_CORE_TOOL_PROMPT =
     "- PERMISSION_DENIED: stop modifying files and explain that the user denied the operation.\n"
     "- PATH_OUTSIDE_WORKSPACE or PROTECTED_PATH: do not try to bypass the sandbox.\n"
     "- COMMAND_REJECTED: choose a simpler non-interactive command or explain why the runtime refused it.\n"
+    "- Git unavailable, not a git repository, exit_code=128, PROCESS_START_FAILED, UNSUPPORTED_PLATFORM, or git not found: do not retry Git repeatedly; continue using file tools and execute_command. In final_answer, briefly mention that Git status/diff was unavailable.\n"
     "- FILE_TOO_LARGE or result truncated: use read_file_range or search_code to narrow context.\n\n";
 
 static ca_status_t ca_prompt_append(char *out, size_t out_size, size_t *used, const char *format, ...)
