@@ -11,7 +11,7 @@
 
 #include "ca_status.h"
 
-#define CA_PROCESS_OUTPUT_CAP 32768
+#define CA_PROCESS_OUTPUT_CAP 65536
 
 typedef struct ca_process_result {
     int exit_code;

@@ -126,6 +126,15 @@ static int ca_ct_contains_dangerous_pattern(const char *command,
         "invoke-restmethod",
         "scp ",
         "ssh ",
+        "git push",
+        "git pull",
+        "git fetch",
+        "git reset",
+        "git clean",
+        "git rebase",
+        "git merge",
+        "git checkout",
+        "git stash",
         NULL
     };
     char lower[CA_CT_COMMAND_CAP];
