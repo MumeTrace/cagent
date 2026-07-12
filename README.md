@@ -402,9 +402,6 @@ src/platform/         Console, argv, process abstraction
 src/project/          Workspace indexer and project detector
 src/tool/             Tool registry and executor
 src/tools/            File, edit, patch, command, Git tools
-docs/                 Design and phase documents
-examples/             Example user flows
-prompts/              Prompt references
 ```
 
 ## Development Notes
@@ -417,7 +414,7 @@ This repository intentionally keeps the core runtime in C:
 - Bounded buffers and explicit status codes
 - Feature flags for shell, Git, and large payload support
 
-The implementation is developed phase by phase. See `docs/18_DEVELOPMENT_PHASES.md` and `docs/21_MVP_COMPLETION_SCOPE.md` for the roadmap.
+Note: detailed phase plans, prompt drafts, and example flows are kept as local development materials and are not part of the public repository snapshot.
 
 ## License
 

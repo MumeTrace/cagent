@@ -402,9 +402,6 @@ src/platform/         Console、argv、process 抽象
 src/project/          Workspace indexer 和项目类型检测
 src/tool/             Tool registry 和 executor
 src/tools/            文件、编辑、patch、命令、Git 工具
-docs/                 设计文档和阶段文档
-examples/             用户流程示例
-prompts/              Prompt 参考
 ```
 
 ## 开发说明
@@ -417,7 +414,7 @@ prompts/              Prompt 参考
 - 使用 bounded buffers 和明确错误码
 - shell、Git、大 payload 支持均可通过 feature flag 控制
 
-项目按阶段开发。路线图可参考 `docs/18_DEVELOPMENT_PHASES.md` 和 `docs/21_MVP_COMPLETION_SCOPE.md`。
+标注：详细阶段规划、Prompt 草稿和示例流程属于本地开发资料，不包含在当前公开仓库快照中。
 
 ## License
 
