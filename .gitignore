@@ -28,7 +28,6 @@ compile_commands.json
 
 # Local specification package
 MANIFEST.txt
-README.md
 docs/
 examples/
 prompts/
