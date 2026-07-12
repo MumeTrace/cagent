@@ -6,6 +6,7 @@
 #include "ca_file_tools.h"
 #include "ca_edit_tracking.h"
 #include "ca_json.h"
+#include "ca_limits.h"
 
 #include <ctype.h>
 #include <stdint.h>
@@ -18,7 +19,7 @@
 #define CA_WT_PATH_SEP "/"
 #endif
 
-#define CA_WT_CONTENT_CAP (64u * 1024u)
+#define CA_WT_CONTENT_CAP CA_MAX_PATCH_SIZE
 
 typedef struct ca_write_args {
     char path[CA_PROJECT_PATH_CAP];

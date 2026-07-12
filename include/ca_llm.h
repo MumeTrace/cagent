@@ -6,9 +6,10 @@
 #ifndef CA_LLM_H
 #define CA_LLM_H
 
+#include "ca_limits.h"
 #include "ca_status.h"
 
-#define CA_LLM_RESPONSE_CAP 8192
+#define CA_LLM_RESPONSE_CAP CA_MAX_JSON_EXTRACT_SIZE
 
 #include "ca_config.h"
 

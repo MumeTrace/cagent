@@ -6,6 +6,7 @@
 #include "ca_command_tools.h"
 
 #include "ca_json.h"
+#include "ca_payload.h"
 #include "ca_process.h"
 
 #include <ctype.h>
@@ -268,59 +269,64 @@ static ca_status_t ca_ct_write_result_json(ca_tool_result_t *result,
                                            const ca_command_args_t *args,
                                            const ca_process_result_t *process_result)
 {
-    char *escaped_command;
-    char *escaped_stdout;
-    char *escaped_stderr;
-    size_t escaped_command_size;
-    size_t escaped_output_size;
-    int written;
-    ca_status_t status = CA_OK;
+    ca_payload_t json;
+    ca_status_t status;
+    int stdout_truncated;
+    int stderr_truncated;
 
     if (result == NULL || args == NULL || process_result == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
-    escaped_command_size = strlen(args->command) * 6u + 1u;
-    escaped_output_size = (size_t)CA_PROCESS_OUTPUT_CAP * 6u + 1u;
-    escaped_command = (char *)malloc(escaped_command_size);
-    escaped_stdout = (char *)malloc(escaped_output_size);
-    escaped_stderr = (char *)malloc(escaped_output_size);
-    if (escaped_command == NULL || escaped_stdout == NULL || escaped_stderr == NULL) {
-        status = ca_ct_result_error(result, "OUT_OF_MEMORY", "Failed to allocate command result buffers.");
-        goto cleanup;
-    }
-
-    if (ca_json_escape_string(args->command, escaped_command, escaped_command_size) != CA_OK ||
-        ca_json_escape_string(process_result->stdout_text, escaped_stdout, escaped_output_size) != CA_OK ||
-        ca_json_escape_string(process_result->stderr_text, escaped_stderr, escaped_output_size) != CA_OK) {
-        status = ca_ct_result_error(result, "RESULT_TOO_LARGE", "Command output could not be encoded as JSON.");
-        goto cleanup;
+    status = ca_payload_init(&json, CA_MAX_TOOL_RESULT_INLINE, CA_MAX_TOOL_RESULT_TOTAL);
+    if (status != CA_OK) {
+        return ca_ct_result_error(result, "OUT_OF_MEMORY", "Failed to initialize command result payload.");
     }
 
     ca_ct_result_reset(result, "execute_command");
     result->success = 1;
-    written = snprintf(result->result_json,
-                       sizeof(result->result_json),
-                       "{\"command\":\"%s\",\"exit_code\":%d,\"timed_out\":%s,"
-                       "\"stdout\":\"%s\",\"stderr\":\"%s\","
-                       "\"stdout_truncated\":%s,\"stderr_truncated\":%s}",
-                       escaped_command,
-                       process_result->exit_code,
-                       process_result->timed_out ? "true" : "false",
-                       escaped_stdout,
-                       escaped_stderr,
-                       process_result->stdout_truncated ? "true" : "false",
-                       process_result->stderr_truncated ? "true" : "false");
-    if (written < 0 || (size_t)written >= sizeof(result->result_json)) {
-        status = ca_ct_result_error(result, "RESULT_TOO_LARGE", "Command result exceeded result buffer.");
-        goto cleanup;
+
+    status = ca_payload_append_cstr(&json, "{\"command\":\"");
+    if (status == CA_OK) {
+        status = ca_payload_append_json_escaped(&json, args->command, strlen(args->command));
+    }
+    if (status == CA_OK) {
+        status = ca_payload_appendf(&json,
+                                    "\",\"exit_code\":%d,\"timed_out\":%s,\"stdout\":\"",
+                                    process_result->exit_code,
+                                    process_result->timed_out ? "true" : "false");
+    }
+    if (status == CA_OK) {
+        status = ca_payload_append_json_escaped(&json, process_result->stdout_text, strlen(process_result->stdout_text));
+    }
+    stdout_truncated = process_result->stdout_truncated || ca_payload_truncated(&json);
+    if (status == CA_OK) {
+        status = ca_payload_append_cstr(&json, "\",\"stderr\":\"");
+    }
+    if (status == CA_OK) {
+        status = ca_payload_append_json_escaped(&json, process_result->stderr_text, strlen(process_result->stderr_text));
+    }
+    stderr_truncated = process_result->stderr_truncated || ca_payload_truncated(&json);
+    if (status == CA_OK) {
+        status = ca_payload_appendf(&json,
+                                    "\",\"stdout_truncated\":%s,\"stderr_truncated\":%s}",
+                                    stdout_truncated ? "true" : "false",
+                                    stderr_truncated ? "true" : "false");
+    }
+    if (status != CA_OK) {
+        ca_payload_free(&json);
+        return ca_ct_result_error(result, "OUT_OF_MEMORY", "Failed to build command result JSON.");
     }
 
-cleanup:
-    free(escaped_command);
-    free(escaped_stdout);
-    free(escaped_stderr);
-    return status;
+    if (snprintf(result->result_json, sizeof(result->result_json), "%s", ca_payload_data(&json)) < 0 ||
+        ca_payload_len(&json) >= sizeof(result->result_json)) {
+        ca_payload_free(&json);
+        status = ca_ct_result_error(result, "RESULT_TOO_LARGE", "Command result exceeded result buffer.");
+        return status;
+    }
+
+    ca_payload_free(&json);
+    return CA_OK;
 }
 
 static ca_status_t ca_ct_execute_command(const ca_tool_call_t *call,

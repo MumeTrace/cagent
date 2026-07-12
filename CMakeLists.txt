@@ -19,6 +19,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(CAGENT_ENABLE_SHELL "Enable guarded execute_command tool" ON)
 option(CAGENT_ENABLE_GIT "Enable read-only Git tools" ON)
+option(CAGENT_ENABLE_LARGE_PAYLOAD "Enable heap-backed large tool payloads" ON)
 
 # 可执行文件 / executable
 add_executable(cagent
@@ -30,6 +31,7 @@ add_executable(cagent
     src/cli/repl.c
     src/config/config.c
     src/config/env.c
+    src/core/payload.c
     src/json/json.c
     src/llm/fake_provider.c
     src/llm/http_client.c
@@ -77,6 +79,12 @@ endif()
 
 if(CAGENT_ENABLE_GIT)
     target_compile_definitions(cagent PRIVATE CAGENT_ENABLE_GIT=1)
+endif()
+
+if(CAGENT_ENABLE_LARGE_PAYLOAD)
+    target_compile_definitions(cagent PRIVATE CAGENT_ENABLE_LARGE_PAYLOAD=1)
+else()
+    target_compile_definitions(cagent PRIVATE CAGENT_ENABLE_LARGE_PAYLOAD=0)
 endif()
 
 if(WIN32)

@@ -9,9 +9,10 @@
 
 #include <stddef.h>
 
+#include "ca_limits.h"
 #include "ca_status.h"
 
-#define CA_PROCESS_OUTPUT_CAP 65536
+#define CA_PROCESS_OUTPUT_CAP CA_MAX_PROCESS_OUTPUT
 
 typedef struct ca_process_result {
     int exit_code;

@@ -5,13 +5,14 @@
 #include <stdio.h>
 
 #include "ca_config.h"
+#include "ca_limits.h"
 #include "ca_project.h"
 #include "ca_status.h"
 
 #define CA_TOOL_NAME_CAP 64
-#define CA_TOOL_ARGS_CAP 131072
+#define CA_TOOL_ARGS_CAP (CA_MAX_TOOL_ARGUMENTS_TOTAL + 1u)
 #define CA_TOOL_REASON_CAP 512
-#define CA_TOOL_RESULT_CAP 131072
+#define CA_TOOL_RESULT_CAP (CA_MAX_TOOL_RESULT_TOTAL + 1u)
 #define CA_TOOL_ERROR_CODE_CAP 64
 #define CA_TOOL_ERROR_MESSAGE_CAP 512
 

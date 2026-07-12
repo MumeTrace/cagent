@@ -5,6 +5,8 @@
  */
 #include "ca_file_tools.h"
 #include "ca_json.h"
+#include "ca_limits.h"
+#include "ca_payload.h"
 
 #include <ctype.h>
 #include <stdint.h>
@@ -18,9 +20,9 @@
 #define CA_DT_PATH_SEP "/"
 #endif
 
-#define CA_DT_MAX_FILE_BYTES   (64u * 1024u)
-#define CA_DT_MAX_NEW_BYTES    (64u * 1024u)
-#define CA_DT_MAX_DIFF_BYTES   (64u * 1024u)
+#define CA_DT_MAX_FILE_BYTES   CA_MAX_FILE_READ_SIZE
+#define CA_DT_MAX_NEW_BYTES    CA_MAX_PATCH_SIZE
+#define CA_DT_MAX_DIFF_BYTES   CA_MAX_DIFF_OUTPUT
 #define CA_DT_SAMPLE_BYTES     4096u
 #define CA_DT_MAX_LCS_CELLS    1000000u
 
@@ -616,8 +618,7 @@ static ca_status_t ca_dt_execute_preview(const ca_tool_call_t *call,
     const char *error_message = "Invalid path.";
     char *old_content = NULL;
     char *diff = NULL;
-    char *escaped_path = NULL;
-    char *escaped_diff = NULL;
+    ca_payload_t json;
     ca_diff_line_t *old_lines = NULL;
     ca_diff_line_t *new_lines = NULL;
     size_t old_size = 0;
@@ -625,7 +626,6 @@ static ca_status_t ca_dt_execute_preview(const ca_tool_call_t *call,
     size_t new_count = 0;
     int changed;
     int truncated = 0;
-    int written;
     ca_status_t status;
 
     ca_dt_result_reset(result, "preview_file_change");
@@ -690,12 +690,8 @@ static ca_status_t ca_dt_execute_preview(const ca_tool_call_t *call,
     }
 
     diff = (char *)malloc(CA_DT_MAX_DIFF_BYTES + 1u);
-    escaped_path = (char *)malloc(CA_PROJECT_PATH_CAP * 2u);
-    escaped_diff = (char *)malloc((CA_DT_MAX_DIFF_BYTES * 2u) + 1u);
-    if (diff == NULL || escaped_path == NULL || escaped_diff == NULL) {
+    if (diff == NULL) {
         free(diff);
-        free(escaped_path);
-        free(escaped_diff);
         free(old_lines);
         free(new_lines);
         free(old_content);
@@ -708,8 +704,6 @@ static ca_status_t ca_dt_execute_preview(const ca_tool_call_t *call,
         status = ca_dt_generate_diff(rel_path, old_lines, old_count, new_lines, new_count, diff, CA_DT_MAX_DIFF_BYTES + 1u, &truncated);
         if (status == CA_ERR_NO_MEMORY) {
             free(diff);
-            free(escaped_path);
-            free(escaped_diff);
             free(old_lines);
             free(new_lines);
             free(old_content);
@@ -718,8 +712,6 @@ static ca_status_t ca_dt_execute_preview(const ca_tool_call_t *call,
         }
         if (status != CA_OK) {
             free(diff);
-            free(escaped_path);
-            free(escaped_diff);
             free(old_lines);
             free(new_lines);
             free(old_content);
@@ -728,41 +720,55 @@ static ca_status_t ca_dt_execute_preview(const ca_tool_call_t *call,
         }
     }
 
-    if (ca_json_escape_string(rel_path, escaped_path, CA_PROJECT_PATH_CAP * 2u) != CA_OK ||
-        ca_json_escape_string(diff, escaped_diff, (CA_DT_MAX_DIFF_BYTES * 2u) + 1u) != CA_OK) {
+    status = ca_payload_init(&json, CA_MAX_TOOL_RESULT_INLINE, CA_MAX_TOOL_RESULT_TOTAL);
+    if (status != CA_OK) {
         free(diff);
-        free(escaped_path);
-        free(escaped_diff);
         free(old_lines);
         free(new_lines);
         free(old_content);
         free(args.new_content);
-        return ca_dt_result_error(result, "DIFF_TOO_LARGE", "Diff output is too large to encode as JSON.");
+        return ca_dt_result_error(result, "OUT_OF_MEMORY", "Failed to initialize diff result payload.");
     }
 
     result->success = 1;
-    written = snprintf(result->result_json,
-                       sizeof(result->result_json),
-                       "{\"path\":\"%s\",\"mode\":\"replace\",\"changed\":%s,"
-                       "\"old_size\":%llu,\"new_size\":%llu,"
-                       "\"old_lines\":%llu,\"new_lines\":%llu,"
-                       "\"truncated\":%s,\"diff\":\"%s\"}",
-                       escaped_path,
-                       changed ? "true" : "false",
-                       (unsigned long long)old_size,
-                       (unsigned long long)strlen(args.new_content),
-                       (unsigned long long)old_count,
-                       (unsigned long long)new_count,
-                       truncated ? "true" : "false",
-                       escaped_diff);
+    status = ca_payload_append_cstr(&json, "{\"path\":\"");
+    if (status == CA_OK) {
+        status = ca_payload_append_json_escaped(&json, rel_path, strlen(rel_path));
+    }
+    if (status == CA_OK) {
+        status = ca_payload_appendf(&json,
+                                    "\",\"mode\":\"replace\",\"changed\":%s,"
+                                    "\"old_size\":%llu,\"new_size\":%llu,"
+                                    "\"old_lines\":%llu,\"new_lines\":%llu,"
+                                    "\"diff\":\"",
+                                    changed ? "true" : "false",
+                                    (unsigned long long)old_size,
+                                    (unsigned long long)strlen(args.new_content),
+                                    (unsigned long long)old_count,
+                                    (unsigned long long)new_count);
+    }
+    if (status == CA_OK) {
+        status = ca_payload_append_json_escaped(&json, diff, strlen(diff));
+    }
+    if (ca_payload_truncated(&json)) {
+        truncated = 1;
+    }
+    if (status == CA_OK) {
+        status = ca_payload_appendf(&json, "\",\"truncated\":%s}", truncated ? "true" : "false");
+    }
+    if (status == CA_OK && ca_payload_len(&json) < sizeof(result->result_json)) {
+        (void)snprintf(result->result_json, sizeof(result->result_json), "%s", ca_payload_data(&json));
+    }
     free(diff);
-    free(escaped_path);
-    free(escaped_diff);
+    ca_payload_free(&json);
     free(old_lines);
     free(new_lines);
     free(old_content);
     free(args.new_content);
-    if (written < 0 || (size_t)written >= sizeof(result->result_json)) {
+    if (status != CA_OK) {
+        return ca_dt_result_error(result, "OUT_OF_MEMORY", "Failed to build diff result JSON.");
+    }
+    if (result->result_json[0] == '\0') {
         return ca_dt_result_error(result, "DIFF_TOO_LARGE", "Diff result JSON exceeded tool result buffer.");
     }
 

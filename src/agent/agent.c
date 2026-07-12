@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#define CA_AGENT_MAX_ACTION_REPAIRS 2
+
 static ca_status_t ca_agent_copy_text(char *dest, size_t dest_size, const char *src)
 {
     int written;
@@ -14,6 +16,45 @@ static ca_status_t ca_agent_copy_text(char *dest, size_t dest_size, const char *
 
     written = snprintf(dest, dest_size, "%s", src);
     if (written < 0 || (size_t)written >= dest_size) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    return CA_OK;
+}
+
+static ca_status_t ca_agent_append_parse_error_observation(char *observation,
+                                                           size_t observation_size,
+                                                           const char *message,
+                                                           int retry_index,
+                                                           int max_retries)
+{
+    char escaped_message[CA_AGENT_ERROR_CAP * 2];
+    int written;
+
+    if (observation == NULL || observation_size == 0 || message == NULL) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    if (ca_json_escape_string(message, escaped_message, sizeof(escaped_message)) != CA_OK) {
+        return CA_ERR_INVALID_ARG;
+    }
+
+    /*
+     * Invalid model output is fed back as an observation instead of ending the
+     * turn immediately. This gives real providers a bounded chance to repair
+     * markdown-wrapped or malformed actions without any tool execution.
+     */
+    written = snprintf(observation,
+                       observation_size,
+                       "{\"type\":\"action_parse_error\",\"success\":false,"
+                       "\"error\":{\"code\":\"INVALID_ACTION_JSON\",\"message\":\"%s\"},"
+                       "\"instruction\":\"Return exactly one valid JSON action object: "
+                       "tool_call or final_answer. Do not use markdown fences or prose outside JSON.\","
+                       "\"retry\":%d,\"max_retries\":%d}",
+                       escaped_message,
+                       retry_index,
+                       max_retries);
+    if (written < 0 || (size_t)written >= observation_size) {
         return CA_ERR_INVALID_ARG;
     }
 
@@ -89,6 +130,7 @@ ca_status_t ca_agent_run_turn(ca_agent_t *agent, const char *user_input)
 {
     char prompt[CA_AGENT_PROMPT_CAP];
     char observation[CA_AGENT_OBSERVATION_CAP];
+    int action_repair_count = 0;
     int step;
 
     if (agent == NULL || agent->llm == NULL || agent->llm->complete == NULL ||
@@ -121,11 +163,25 @@ ca_status_t ca_agent_run_turn(ca_agent_t *agent, const char *user_input)
 
         status = ca_agent_parse_action(response.raw_text, &action);
         if (status != CA_OK) {
-            fprintf(stderr,
-                    "[agent] action parse error: %s\n",
-                    action.error_message[0] != '\0' ? action.error_message : "invalid action");
-            return status;
+            const char *message = action.error_message[0] != '\0' ? action.error_message : "invalid action";
+
+            fprintf(stderr, "[agent] action parse error: %s\n", message);
+            if (action_repair_count >= CA_AGENT_MAX_ACTION_REPAIRS) {
+                fprintf(stderr, "[agent] action repair retries exceeded\n");
+                return status;
+            }
+            action_repair_count++;
+            if (ca_agent_append_parse_error_observation(observation,
+                                                        sizeof(observation),
+                                                        message,
+                                                        action_repair_count,
+                                                        CA_AGENT_MAX_ACTION_REPAIRS) != CA_OK) {
+                fprintf(stderr, "[agent] failed to build action repair observation\n");
+                return CA_ERR_INVALID_ARG;
+            }
+            continue;
         }
+        action_repair_count = 0;
 
         if (action.type == CA_AGENT_ACTION_TOOL_CALL) {
             ca_tool_call_t call;

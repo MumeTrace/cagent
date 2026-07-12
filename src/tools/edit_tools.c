@@ -6,6 +6,8 @@
 #include "ca_file_tools.h"
 #include "ca_edit_tracking.h"
 #include "ca_json.h"
+#include "ca_limits.h"
+#include "ca_payload.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -18,9 +20,9 @@
 #define CA_ET_PATH_SEP "/"
 #endif
 
-#define CA_ET_MAX_FILE_BYTES   (64u * 1024u)
-#define CA_ET_MAX_ARG_BYTES    (64u * 1024u)
-#define CA_ET_MAX_DIFF_BYTES   (64u * 1024u)
+#define CA_ET_MAX_FILE_BYTES   CA_MAX_FILE_READ_SIZE
+#define CA_ET_MAX_ARG_BYTES    CA_MAX_PATCH_SIZE
+#define CA_ET_MAX_DIFF_BYTES   CA_MAX_DIFF_OUTPUT
 #define CA_ET_SAMPLE_BYTES     4096u
 
 typedef struct ca_edit_args {
@@ -807,15 +809,13 @@ static ca_status_t ca_et_execute_edit_file(const ca_tool_call_t *call,
     char *old_content = NULL;
     char *new_content = NULL;
     char *diff = NULL;
-    char *escaped_path = NULL;
-    char *escaped_diff = NULL;
+    ca_payload_t json;
     size_t old_size = 0;
     size_t new_size = 0;
     size_t replacements = 0;
     const char *first_match = NULL;
     int changed;
     int diff_truncated = 0;
-    int written;
     ca_status_t status;
 
     ca_et_result_reset(result, "edit_file");
@@ -892,12 +892,8 @@ static ca_status_t ca_et_execute_edit_file(const ca_tool_call_t *call,
     }
 
     diff = (char *)malloc(CA_ET_MAX_DIFF_BYTES + 1u);
-    escaped_path = (char *)malloc(CA_PROJECT_PATH_CAP * 2u);
-    escaped_diff = (char *)malloc((CA_ET_MAX_DIFF_BYTES * 2u) + 1u);
-    if (diff == NULL || escaped_path == NULL || escaped_diff == NULL) {
+    if (diff == NULL) {
         free(diff);
-        free(escaped_path);
-        free(escaped_diff);
         free(old_content);
         free(new_content);
         ca_et_args_free(&args);
@@ -909,8 +905,6 @@ static ca_status_t ca_et_execute_edit_file(const ca_tool_call_t *call,
         status = ca_et_generate_diff(rel_path, old_content != NULL ? old_content : new_content, &args, diff, CA_ET_MAX_DIFF_BYTES + 1u, &diff_truncated);
         if (status != CA_OK) {
             free(diff);
-            free(escaped_path);
-            free(escaped_diff);
             free(old_content);
             free(new_content);
             ca_et_args_free(&args);
@@ -919,8 +913,6 @@ static ca_status_t ca_et_execute_edit_file(const ca_tool_call_t *call,
         status = ca_et_write_temp_then_replace(abs_path, new_content, new_size);
         if (status != CA_OK) {
             free(diff);
-            free(escaped_path);
-            free(escaped_diff);
             free(old_content);
             free(new_content);
             ca_et_args_free(&args);
@@ -928,8 +920,6 @@ static ca_status_t ca_et_execute_edit_file(const ca_tool_call_t *call,
         }
         if (ca_edit_tracking_note_write(ctx->edit_tracking, ctx->workspace_root, rel_path) != CA_OK) {
             free(diff);
-            free(escaped_path);
-            free(escaped_diff);
             free(old_content);
             free(new_content);
             ca_et_args_free(&args);
@@ -937,38 +927,52 @@ static ca_status_t ca_et_execute_edit_file(const ca_tool_call_t *call,
         }
     }
 
-    if (ca_json_escape_string(rel_path, escaped_path, CA_PROJECT_PATH_CAP * 2u) != CA_OK ||
-        ca_json_escape_string(diff, escaped_diff, (CA_ET_MAX_DIFF_BYTES * 2u) + 1u) != CA_OK) {
+    status = ca_payload_init(&json, CA_MAX_TOOL_RESULT_INLINE, CA_MAX_TOOL_RESULT_TOTAL);
+    if (status != CA_OK) {
         free(diff);
-        free(escaped_path);
-        free(escaped_diff);
         free(old_content);
         free(new_content);
         ca_et_args_free(&args);
-        return ca_et_result_error(result, "DIFF_TOO_LARGE", "Diff output is too large to encode as JSON.");
+        return ca_et_result_error(result, "OUT_OF_MEMORY", "Failed to initialize edit result payload.");
     }
 
     result->success = 1;
-    written = snprintf(result->result_json,
-                       sizeof(result->result_json),
-                       "{\"path\":\"%s\",\"replacements\":%llu,\"bytes_written\":%llu,"
-                       "\"old_size\":%llu,\"new_size\":%llu,\"changed\":%s,"
-                       "\"diff_truncated\":%s,\"diff\":\"%s\"}",
-                       escaped_path,
-                       (unsigned long long)replacements,
-                       (unsigned long long)(changed ? new_size : 0u),
-                       (unsigned long long)old_size,
-                       (unsigned long long)new_size,
-                       changed ? "true" : "false",
-                       diff_truncated ? "true" : "false",
-                       escaped_diff);
+    status = ca_payload_append_cstr(&json, "{\"path\":\"");
+    if (status == CA_OK) {
+        status = ca_payload_append_json_escaped(&json, rel_path, strlen(rel_path));
+    }
+    if (status == CA_OK) {
+        status = ca_payload_appendf(&json,
+                                    "\",\"replacements\":%llu,\"bytes_written\":%llu,"
+                                    "\"old_size\":%llu,\"new_size\":%llu,\"changed\":%s,"
+                                    "\"diff\":\"",
+                                    (unsigned long long)replacements,
+                                    (unsigned long long)(changed ? new_size : 0u),
+                                    (unsigned long long)old_size,
+                                    (unsigned long long)new_size,
+                                    changed ? "true" : "false");
+    }
+    if (status == CA_OK) {
+        status = ca_payload_append_json_escaped(&json, diff, strlen(diff));
+    }
+    if (ca_payload_truncated(&json)) {
+        diff_truncated = 1;
+    }
+    if (status == CA_OK) {
+        status = ca_payload_appendf(&json, "\",\"diff_truncated\":%s}", diff_truncated ? "true" : "false");
+    }
+    if (status == CA_OK && ca_payload_len(&json) < sizeof(result->result_json)) {
+        (void)snprintf(result->result_json, sizeof(result->result_json), "%s", ca_payload_data(&json));
+    }
     free(diff);
-    free(escaped_path);
-    free(escaped_diff);
+    ca_payload_free(&json);
     free(old_content);
     free(new_content);
     ca_et_args_free(&args);
-    if (written < 0 || (size_t)written >= sizeof(result->result_json)) {
+    if (status != CA_OK) {
+        return ca_et_result_error(result, "OUT_OF_MEMORY", "Failed to build edit result JSON.");
+    }
+    if (result->result_json[0] == '\0') {
         return ca_et_result_error(result, "DIFF_TOO_LARGE", "Edit result JSON exceeded tool result buffer.");
     }
 

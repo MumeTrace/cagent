@@ -28,6 +28,7 @@ static const char *CA_CORE_TOOL_PROMPT =
     "- git_restore_file [dangerous]: {\"paths\":[\"src/main.c\"]}\n\n"
     "Tool Protocol:\n"
     "Return exactly one JSON object, with no markdown, no code fences, and no explanatory prose.\n"
+    "If the previous observation is action_parse_error, repair your next response by outputting only one valid JSON action object.\n"
     "For a tool call use:\n"
     "{\"type\":\"tool_call\",\"tool\":\"edit_file\",\"arguments\":{\"path\":\"src/main.c\",\"old_string\":\"exact text from file\",\"new_string\":\"replacement text\",\"replace_all\":false},\"reason\":\"why this tool is needed\"}\n"
     "For completion use:\n"

@@ -6,6 +6,8 @@
 #include "ca_file_tools.h"
 #include "ca_edit_tracking.h"
 #include "ca_json.h"
+#include "ca_limits.h"
+#include "ca_payload.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -18,9 +20,9 @@
 #define CA_PT_PATH_SEP "/"
 #endif
 
-#define CA_PT_MAX_PATCH_BYTES  (64u * 1024u)
-#define CA_PT_MAX_FILE_BYTES   (64u * 1024u)
-#define CA_PT_MAX_DIFF_BYTES   (64u * 1024u)
+#define CA_PT_MAX_PATCH_BYTES  CA_MAX_PATCH_SIZE
+#define CA_PT_MAX_FILE_BYTES   CA_MAX_FILE_READ_SIZE
+#define CA_PT_MAX_DIFF_BYTES   CA_MAX_DIFF_OUTPUT
 #define CA_PT_MAX_FILES        8u
 #define CA_PT_MAX_HUNKS        64u
 #define CA_PT_MAX_OPS          4096u
@@ -975,76 +977,71 @@ static ca_status_t ca_pt_build_result(ca_patch_plan_t *plan,
                                       const char *patch_text,
                                       ca_tool_result_t *result)
 {
-    char *escaped_patch;
-    ca_patch_buffer_t json;
-    char num[128];
+    ca_payload_t json;
     size_t i;
     int diff_truncated = 0;
+    ca_status_t status;
 
     if (plan == NULL || patch_text == NULL || result == NULL) {
         return CA_ERR_INVALID_ARG;
     }
-    escaped_patch = (char *)malloc((CA_PT_MAX_DIFF_BYTES * 2u) + 1u);
-    if (escaped_patch == NULL) {
-        return ca_pt_result_error(result, "OUT_OF_MEMORY", "Failed to allocate result buffer.");
-    }
-    if (strlen(patch_text) > CA_PT_MAX_DIFF_BYTES) {
-        char saved = ((char *)patch_text)[CA_PT_MAX_DIFF_BYTES];
-        ((char *)patch_text)[CA_PT_MAX_DIFF_BYTES] = '\0';
-        if (ca_json_escape_string(patch_text, escaped_patch, (CA_PT_MAX_DIFF_BYTES * 2u) + 1u) != CA_OK) {
-            ((char *)patch_text)[CA_PT_MAX_DIFF_BYTES] = saved;
-            free(escaped_patch);
-            return ca_pt_result_error(result, "PATCH_TOO_LARGE", "Patch diff is too large to encode.");
-        }
-        ((char *)patch_text)[CA_PT_MAX_DIFF_BYTES] = saved;
-        diff_truncated = 1;
-    } else if (ca_json_escape_string(patch_text, escaped_patch, (CA_PT_MAX_DIFF_BYTES * 2u) + 1u) != CA_OK) {
-        free(escaped_patch);
-        return ca_pt_result_error(result, "PATCH_TOO_LARGE", "Patch diff is too large to encode.");
+    status = ca_payload_init(&json, CA_MAX_TOOL_RESULT_INLINE, CA_MAX_TOOL_RESULT_TOTAL);
+    if (status != CA_OK) {
+        return ca_pt_result_error(result, "OUT_OF_MEMORY", "Failed to initialize patch result payload.");
     }
 
     ca_pt_result_reset(result);
     result->success = 1;
-    ca_pt_buffer_init(&json, result->result_json, sizeof(result->result_json));
-    ca_pt_buffer_append(&json, "{\"files_changed\":");
-    (void)snprintf(num, sizeof(num), "%llu", (unsigned long long)plan->file_count);
-    ca_pt_buffer_append(&json, num);
-    ca_pt_buffer_append(&json, ",\"hunks_applied\":");
-    (void)snprintf(num, sizeof(num), "%llu", (unsigned long long)plan->total_hunks);
-    ca_pt_buffer_append(&json, num);
-    ca_pt_buffer_append(&json, ",\"bytes_written\":");
-    (void)snprintf(num, sizeof(num), "%llu", (unsigned long long)plan->total_bytes_written);
-    ca_pt_buffer_append(&json, num);
-    ca_pt_buffer_append(&json, ",\"diff_truncated\":");
-    ca_pt_buffer_append(&json, diff_truncated ? "true" : "false");
-    ca_pt_buffer_append(&json, ",\"files\":[");
+    status = ca_payload_appendf(&json,
+                                "{\"files_changed\":%llu,\"hunks_applied\":%llu,\"bytes_written\":%llu,\"files\":[",
+                                (unsigned long long)plan->file_count,
+                                (unsigned long long)plan->total_hunks,
+                                (unsigned long long)plan->total_bytes_written);
     for (i = 0; i < plan->file_count; i++) {
-        char escaped_path[CA_PROJECT_PATH_CAP * 2u];
-        if (ca_json_escape_string(plan->files[i].path, escaped_path, sizeof(escaped_path)) != CA_OK) {
-            free(escaped_patch);
-            return ca_pt_result_error(result, "INVALID_ARGUMENT", "Patch path is too long for result JSON.");
+        if (status == CA_OK) {
+            status = ca_payload_append_cstr(&json, i == 0 ? "" : ",");
         }
-        ca_pt_buffer_append(&json, i == 0 ? "" : ",");
-        ca_pt_buffer_append(&json, "{\"path\":\"");
-        ca_pt_buffer_append(&json, escaped_path);
-        ca_pt_buffer_append(&json, "\",\"hunks_applied\":");
-        (void)snprintf(num, sizeof(num), "%llu", (unsigned long long)plan->files[i].hunk_count);
-        ca_pt_buffer_append(&json, num);
-        ca_pt_buffer_append(&json, ",\"old_size\":");
-        (void)snprintf(num, sizeof(num), "%llu", (unsigned long long)plan->files[i].old_size);
-        ca_pt_buffer_append(&json, num);
-        ca_pt_buffer_append(&json, ",\"new_size\":");
-        (void)snprintf(num, sizeof(num), "%llu", (unsigned long long)plan->files[i].new_size);
-        ca_pt_buffer_append(&json, num);
-        ca_pt_buffer_append(&json, "}");
+        if (status == CA_OK) {
+            status = ca_payload_append_cstr(&json, "{\"path\":\"");
+        }
+        if (status == CA_OK) {
+            status = ca_payload_append_json_escaped(&json, plan->files[i].path, strlen(plan->files[i].path));
+        }
+        if (status == CA_OK) {
+            status = ca_payload_appendf(&json,
+                                        "\",\"hunks_applied\":%llu,\"old_size\":%llu,\"new_size\":%llu}",
+                                        (unsigned long long)plan->files[i].hunk_count,
+                                        (unsigned long long)plan->files[i].old_size,
+                                        (unsigned long long)plan->files[i].new_size);
+        }
     }
-    ca_pt_buffer_append(&json, "],\"diff\":\"");
-    ca_pt_buffer_append(&json, escaped_patch);
-    ca_pt_buffer_append(&json, "\"}");
-    free(escaped_patch);
-    if (json.truncated) {
+    if (status == CA_OK) {
+        status = ca_payload_append_cstr(&json, "],\"diff\":\"");
+    }
+    if (status == CA_OK) {
+        size_t patch_len = strlen(patch_text);
+        size_t encoded_len = patch_len > CA_PT_MAX_DIFF_BYTES ? CA_PT_MAX_DIFF_BYTES : patch_len;
+        if (patch_len > encoded_len) {
+            diff_truncated = 1;
+        }
+        status = ca_payload_append_json_escaped(&json, patch_text, encoded_len);
+    }
+    if (ca_payload_truncated(&json)) {
+        diff_truncated = 1;
+    }
+    if (status == CA_OK) {
+        status = ca_payload_appendf(&json, "\",\"diff_truncated\":%s}", diff_truncated ? "true" : "false");
+    }
+    if (status != CA_OK) {
+        ca_payload_free(&json);
+        return ca_pt_result_error(result, "OUT_OF_MEMORY", "Failed to build patch result JSON.");
+    }
+    if (snprintf(result->result_json, sizeof(result->result_json), "%s", ca_payload_data(&json)) < 0 ||
+        ca_payload_len(&json) >= sizeof(result->result_json)) {
+        ca_payload_free(&json);
         return ca_pt_result_error(result, "PATCH_TOO_LARGE", "Patch result JSON exceeded tool result buffer.");
     }
+    ca_payload_free(&json);
     return CA_OK;
 }
 

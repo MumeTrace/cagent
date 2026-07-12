@@ -9,6 +9,7 @@
 #include "ca_git_tools.h"
 #include "ca_edit_tracking.h"
 #include "ca_json.h"
+#include "ca_limits.h"
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -37,7 +38,7 @@
 #define CA_FT_DEFAULT_MAX_RESULTS  20
 #define CA_FT_MAX_RESULTS          100
 #define CA_FT_LIST_MAX_RESULTS     200
-#define CA_FT_READ_BYTES_LIMIT     6000
+#define CA_FT_READ_BYTES_LIMIT     CA_MAX_FILE_READ_SIZE
 #define CA_FT_SEARCH_FILE_LIMIT    1048576u
 #define CA_FT_LINE_CAP             4096
 

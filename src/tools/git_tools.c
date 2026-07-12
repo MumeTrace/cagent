@@ -7,6 +7,7 @@
 #include "ca_git_tools.h"
 
 #include "ca_json.h"
+#include "ca_payload.h"
 #include "ca_process.h"
 
 #include <ctype.h>
@@ -554,49 +555,49 @@ static ca_status_t ca_gt_write_process_json(ca_tool_result_t *result,
                                             const char *primary_value,
                                             const ca_process_result_t *process_result)
 {
-    char *escaped_primary;
-    char *escaped_stderr;
-    size_t output_escape_size;
-    int written;
-    ca_status_t status = CA_OK;
+    ca_payload_t json;
+    ca_status_t status;
+    int truncated;
 
     if (result == NULL || tool_name == NULL || primary_key == NULL || primary_value == NULL || process_result == NULL) {
         return CA_ERR_INVALID_ARG;
     }
 
-    output_escape_size = (size_t)CA_PROCESS_OUTPUT_CAP * 6u + 1u;
-    escaped_primary = (char *)malloc(output_escape_size);
-    escaped_stderr = (char *)malloc(output_escape_size);
-    if (escaped_primary == NULL || escaped_stderr == NULL) {
-        status = ca_gt_result_error(result, tool_name, "OUT_OF_MEMORY", "Failed to allocate Git result buffers.");
-        goto cleanup;
-    }
-
-    if (ca_json_escape_string(primary_value, escaped_primary, output_escape_size) != CA_OK ||
-        ca_json_escape_string(process_result->stderr_text, escaped_stderr, output_escape_size) != CA_OK) {
-        status = ca_gt_result_error(result, tool_name, "RESULT_TOO_LARGE", "Git output could not be encoded as JSON.");
-        goto cleanup;
+    status = ca_payload_init(&json, CA_MAX_TOOL_RESULT_INLINE, CA_MAX_TOOL_RESULT_TOTAL);
+    if (status != CA_OK) {
+        return ca_gt_result_error(result, tool_name, "OUT_OF_MEMORY", "Failed to initialize Git result payload.");
     }
 
     ca_gt_result_reset(result, tool_name);
     result->success = 1;
-    written = snprintf(result->result_json,
-                       sizeof(result->result_json),
-                       "{\"exit_code\":%d,\"%s\":\"%s\",\"stderr\":\"%s\",\"truncated\":%s}",
-                       process_result->exit_code,
-                       primary_key,
-                       escaped_primary,
-                       escaped_stderr,
-                       (process_result->stdout_truncated || process_result->stderr_truncated) ? "true" : "false");
-    if (written < 0 || (size_t)written >= sizeof(result->result_json)) {
-        status = ca_gt_result_error(result, tool_name, "RESULT_TOO_LARGE", "Git result exceeded result buffer.");
-        goto cleanup;
+
+    status = ca_payload_appendf(&json, "{\"exit_code\":%d,\"%s\":\"", process_result->exit_code, primary_key);
+    if (status == CA_OK) {
+        status = ca_payload_append_json_escaped(&json, primary_value, strlen(primary_value));
+    }
+    if (status == CA_OK) {
+        status = ca_payload_append_cstr(&json, "\",\"stderr\":\"");
+    }
+    if (status == CA_OK) {
+        status = ca_payload_append_json_escaped(&json, process_result->stderr_text, strlen(process_result->stderr_text));
+    }
+    truncated = process_result->stdout_truncated || process_result->stderr_truncated || ca_payload_truncated(&json);
+    if (status == CA_OK) {
+        status = ca_payload_appendf(&json, "\",\"truncated\":%s}", truncated ? "true" : "false");
+    }
+    if (status != CA_OK) {
+        ca_payload_free(&json);
+        return ca_gt_result_error(result, tool_name, "OUT_OF_MEMORY", "Failed to build Git result JSON.");
     }
 
-cleanup:
-    free(escaped_primary);
-    free(escaped_stderr);
-    return status;
+    if (snprintf(result->result_json, sizeof(result->result_json), "%s", ca_payload_data(&json)) < 0 ||
+        ca_payload_len(&json) >= sizeof(result->result_json)) {
+        ca_payload_free(&json);
+        return ca_gt_result_error(result, tool_name, "RESULT_TOO_LARGE", "Git result exceeded result buffer.");
+    }
+
+    ca_payload_free(&json);
+    return CA_OK;
 }
 
 static ca_status_t ca_gt_write_stdout_json(ca_tool_result_t *result,
@@ -613,10 +614,9 @@ static ca_status_t ca_gt_write_paths_result(ca_tool_result_t *result,
                                             const ca_process_result_t *process_result)
 {
     char paths_json[CA_GT_PATHS_JSON_CAP];
-    char *escaped_stderr;
-    size_t output_escape_size;
-    int written;
-    ca_status_t status = CA_OK;
+    ca_payload_t json;
+    ca_status_t status;
+    int truncated;
 
     if (result == NULL || tool_name == NULL || paths == NULL || process_result == NULL) {
         return CA_ERR_INVALID_ARG;
@@ -626,31 +626,38 @@ static ca_status_t ca_gt_write_paths_result(ca_tool_result_t *result,
         return ca_gt_result_error(result, tool_name, "RESULT_TOO_LARGE", "Git paths result exceeded buffer.");
     }
 
-    output_escape_size = (size_t)CA_PROCESS_OUTPUT_CAP * 6u + 1u;
-    escaped_stderr = (char *)malloc(output_escape_size);
-    if (escaped_stderr == NULL) {
-        return ca_gt_result_error(result, tool_name, "OUT_OF_MEMORY", "Failed to allocate Git result buffer.");
-    }
-    if (ca_json_escape_string(process_result->stderr_text, escaped_stderr, output_escape_size) != CA_OK) {
-        free(escaped_stderr);
-        return ca_gt_result_error(result, tool_name, "RESULT_TOO_LARGE", "Git stderr could not be encoded as JSON.");
+    status = ca_payload_init(&json, CA_MAX_TOOL_RESULT_INLINE, CA_MAX_TOOL_RESULT_TOTAL);
+    if (status != CA_OK) {
+        return ca_gt_result_error(result, tool_name, "OUT_OF_MEMORY", "Failed to initialize Git result payload.");
     }
 
     ca_gt_result_reset(result, tool_name);
     result->success = 1;
-    written = snprintf(result->result_json,
-                       sizeof(result->result_json),
-                       "{\"exit_code\":%d,\"paths\":%s,\"stderr\":\"%s\",\"truncated\":%s}",
-                       process_result->exit_code,
-                       paths_json,
-                       escaped_stderr,
-                       (process_result->stdout_truncated || process_result->stderr_truncated) ? "true" : "false");
-    if (written < 0 || (size_t)written >= sizeof(result->result_json)) {
-        status = ca_gt_result_error(result, tool_name, "RESULT_TOO_LARGE", "Git result exceeded result buffer.");
+
+    status = ca_payload_appendf(&json,
+                                "{\"exit_code\":%d,\"paths\":%s,\"stderr\":\"",
+                                process_result->exit_code,
+                                paths_json);
+    if (status == CA_OK) {
+        status = ca_payload_append_json_escaped(&json, process_result->stderr_text, strlen(process_result->stderr_text));
+    }
+    truncated = process_result->stdout_truncated || process_result->stderr_truncated || ca_payload_truncated(&json);
+    if (status == CA_OK) {
+        status = ca_payload_appendf(&json, "\",\"truncated\":%s}", truncated ? "true" : "false");
+    }
+    if (status != CA_OK) {
+        ca_payload_free(&json);
+        return ca_gt_result_error(result, tool_name, "OUT_OF_MEMORY", "Failed to build Git paths result JSON.");
     }
 
-    free(escaped_stderr);
-    return status;
+    if (snprintf(result->result_json, sizeof(result->result_json), "%s", ca_payload_data(&json)) < 0 ||
+        ca_payload_len(&json) >= sizeof(result->result_json)) {
+        ca_payload_free(&json);
+        return ca_gt_result_error(result, tool_name, "RESULT_TOO_LARGE", "Git result exceeded result buffer.");
+    }
+
+    ca_payload_free(&json);
+    return CA_OK;
 }
 
 static ca_status_t ca_gt_run_git_command(const ca_tool_context_t *ctx,
@@ -1063,9 +1070,6 @@ static ca_status_t ca_gt_execute_commit(const ca_tool_call_t *call,
     ca_process_result_t process_result;
     char message[CA_GT_MESSAGE_CAP];
     char command[CA_GT_COMMAND_CAP];
-    char *escaped_stdout;
-    char *escaped_stderr;
-    size_t output_escape_size;
     int written;
     ca_status_t status;
 
@@ -1083,36 +1087,7 @@ static ca_status_t ca_gt_execute_commit(const ca_tool_call_t *call,
         return status;
     }
 
-    output_escape_size = (size_t)CA_PROCESS_OUTPUT_CAP * 6u + 1u;
-    escaped_stdout = (char *)malloc(output_escape_size);
-    escaped_stderr = (char *)malloc(output_escape_size);
-    if (escaped_stdout == NULL || escaped_stderr == NULL) {
-        free(escaped_stdout);
-        free(escaped_stderr);
-        return ca_gt_result_error(result, "git_commit", "OUT_OF_MEMORY", "Failed to allocate commit result buffer.");
-    }
-    if (ca_json_escape_string(process_result.stdout_text, escaped_stdout, output_escape_size) != CA_OK ||
-        ca_json_escape_string(process_result.stderr_text, escaped_stderr, output_escape_size) != CA_OK) {
-        free(escaped_stdout);
-        free(escaped_stderr);
-        return ca_gt_result_error(result, "git_commit", "RESULT_TOO_LARGE", "Commit output could not be encoded as JSON.");
-    }
-
-    ca_gt_result_reset(result, "git_commit");
-    result->success = 1;
-    written = snprintf(result->result_json,
-                       sizeof(result->result_json),
-                       "{\"exit_code\":%d,\"stdout\":\"%s\",\"stderr\":\"%s\",\"truncated\":%s}",
-                       process_result.exit_code,
-                       escaped_stdout,
-                       escaped_stderr,
-                       (process_result.stdout_truncated || process_result.stderr_truncated) ? "true" : "false");
-    free(escaped_stdout);
-    free(escaped_stderr);
-    if (written < 0 || (size_t)written >= sizeof(result->result_json)) {
-        return ca_gt_result_error(result, "git_commit", "RESULT_TOO_LARGE", "Commit result exceeded buffer.");
-    }
-    return CA_OK;
+    return ca_gt_write_process_json(result, "git_commit", "stdout", process_result.stdout_text, &process_result);
 }
 
 static ca_status_t ca_gt_parse_branch_name(const ca_tool_call_t *call, char *name, size_t name_size, ca_tool_result_t *result)
@@ -1149,9 +1124,8 @@ static ca_status_t ca_gt_execute_create_branch(const ca_tool_call_t *call,
     ca_process_result_t process_result;
     char name[CA_GT_BRANCH_CAP];
     char command[CA_GT_COMMAND_CAP];
-    char escaped_branch[CA_GT_BRANCH_CAP * 2u];
-    char *escaped_stderr;
-    size_t output_escape_size;
+    ca_payload_t json;
+    int truncated;
     int written;
     ca_status_t status;
 
@@ -1169,27 +1143,35 @@ static ca_status_t ca_gt_execute_create_branch(const ca_tool_call_t *call,
         return status;
     }
 
-    output_escape_size = (size_t)CA_PROCESS_OUTPUT_CAP * 6u + 1u;
-    escaped_stderr = (char *)malloc(output_escape_size);
-    if (escaped_stderr == NULL) {
-        return ca_gt_result_error(result, "git_create_branch", "OUT_OF_MEMORY", "Failed to allocate branch result buffer.");
-    }
-    if (ca_json_escape_string(name, escaped_branch, sizeof(escaped_branch)) != CA_OK ||
-        ca_json_escape_string(process_result.stderr_text, escaped_stderr, output_escape_size) != CA_OK) {
-        free(escaped_stderr);
-        return ca_gt_result_error(result, "git_create_branch", "RESULT_TOO_LARGE", "Branch result could not be encoded as JSON.");
+    status = ca_payload_init(&json, CA_MAX_TOOL_RESULT_INLINE, CA_MAX_TOOL_RESULT_TOTAL);
+    if (status != CA_OK) {
+        return ca_gt_result_error(result, "git_create_branch", "OUT_OF_MEMORY", "Failed to initialize branch result payload.");
     }
 
     ca_gt_result_reset(result, "git_create_branch");
     result->success = 1;
-    written = snprintf(result->result_json,
-                       sizeof(result->result_json),
-                       "{\"exit_code\":%d,\"branch\":\"%s\",\"stderr\":\"%s\",\"truncated\":%s}",
-                       process_result.exit_code,
-                       escaped_branch,
-                       escaped_stderr,
-                       (process_result.stdout_truncated || process_result.stderr_truncated) ? "true" : "false");
-    free(escaped_stderr);
+
+    status = ca_payload_appendf(&json, "{\"exit_code\":%d,\"branch\":\"", process_result.exit_code);
+    if (status == CA_OK) {
+        status = ca_payload_append_json_escaped(&json, name, strlen(name));
+    }
+    if (status == CA_OK) {
+        status = ca_payload_append_cstr(&json, "\",\"stderr\":\"");
+    }
+    if (status == CA_OK) {
+        status = ca_payload_append_json_escaped(&json, process_result.stderr_text, strlen(process_result.stderr_text));
+    }
+    truncated = process_result.stdout_truncated || process_result.stderr_truncated || ca_payload_truncated(&json);
+    if (status == CA_OK) {
+        status = ca_payload_appendf(&json, "\",\"truncated\":%s}", truncated ? "true" : "false");
+    }
+    if (status != CA_OK) {
+        ca_payload_free(&json);
+        return ca_gt_result_error(result, "git_create_branch", "OUT_OF_MEMORY", "Failed to build branch result JSON.");
+    }
+
+    written = snprintf(result->result_json, sizeof(result->result_json), "%s", ca_payload_data(&json));
+    ca_payload_free(&json);
     if (written < 0 || (size_t)written >= sizeof(result->result_json)) {
         return ca_gt_result_error(result, "git_create_branch", "RESULT_TOO_LARGE", "Branch result exceeded buffer.");
     }
